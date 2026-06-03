@@ -57,6 +57,81 @@ Add the following JSON entry to your `claude_desktop_config.json` file or Cursor
     }
 }
 ```
+
+When configured this way the client launches the server as a local subprocess and
+talks to it over **stdio** (the default transport). This is the simplest setup and
+requires no open ports.
+
+### Running over HTTP
+
+The server can also run as a network service over HTTP, which is useful when the
+client and server live on different machines (or in different containers). Two
+transports are available:
+
+* `streamable-http` (recommended)
+* `sse` (legacy, kept for backward compatibility)
+
+Select the transport with the `--transport` flag (or the `MCP_TRANSPORT` env var)
+and optionally configure the bind address and endpoint path:
+
+| Flag | Env var | Default | Description |
+| --- | --- | --- | --- |
+| `--transport` | `MCP_TRANSPORT` | `stdio` | `stdio`, `streamable-http`, or `sse` |
+| `--host` | `MCP_HOST` | `127.0.0.1` | Bind host for HTTP transports |
+| `--port` | `MCP_PORT` | `8000` | Bind port for HTTP transports |
+| `--path` | `MCP_PATH` | `/mcp` | URL path for the HTTP endpoint |
+
+Start an HTTP server:
+
+```bash
+LABEL_STUDIO_API_KEY=your_actual_api_key_here \
+LABEL_STUDIO_URL=http://localhost:8080 \
+uvx --from git+https://github.com/HumanSignal/label-studio-mcp-server \
+    mcp-label-studio --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+The MCP endpoint will then be available at `http://127.0.0.1:8000/mcp`.
+
+> **Note:** The GitHub repository's visibility (public/private) is unrelated to the
+> transport. HTTP works the same either way — you only need to make the server
+> reachable on the network from wherever the client runs. Use `--host 0.0.0.0` to
+> accept connections from other machines, and put it behind HTTPS + authentication
+> if it is exposed beyond a trusted network.
+
+#### Connect from VS Code
+
+Add a `.vscode/mcp.json` file (or use the global MCP settings) pointing at the URL:
+
+```json
+{
+    "servers": {
+        "label-studio": {
+            "type": "http",
+            "url": "http://127.0.0.1:8000/mcp"
+        }
+    }
+}
+```
+
+#### Connect from Claude Desktop
+
+Claude Desktop connects to local servers over stdio (the `uvx` config above). To
+connect it to a remote HTTP server, add the server as a Custom Connector from
+**Settings → Connectors → Add custom connector** and provide the URL
+(`http://127.0.0.1:8000/mcp`). Alternatively, bridge an HTTP endpoint to stdio with
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+
+```json
+{
+    "mcpServers": {
+        "label-studio": {
+            "command": "npx",
+            "args": ["mcp-remote", "http://127.0.0.1:8000/mcp"]
+        }
+    }
+}
+```
+
 <!-- 
 ## Installation
 Follow these instructions to install the server. 
