@@ -44,7 +44,59 @@ def json_datetime_serializer(obj):
     """
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
+    if isinstance(obj, (datetime.date, datetime.time)):
+        return obj.isoformat()
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
+# --- Generic serialization helpers ---
+def _serialize(obj):
+    """Best-effort conversion of SDK response objects into JSON-friendly structures.
+
+    Handles pydantic models (model_dump / dict), datetimes, lists, dicts and
+    primitive values so individual tools don't have to re-implement this logic.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    if isinstance(obj, (datetime.date, datetime.time)):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _serialize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_serialize(o) for o in obj]
+    # Pydantic v2 models
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump(mode="json")
+        except Exception:
+            try:
+                return _serialize(obj.model_dump())
+            except Exception:
+                pass
+    # Pydantic v1 / older models
+    if hasattr(obj, "dict") and callable(getattr(obj, "dict")):
+        try:
+            return _serialize(obj.dict())
+        except Exception:
+            pass
+    return str(obj)
+
+
+def _json(obj) -> str:
+    """Serialize an arbitrary SDK response to a JSON string."""
+    return json.dumps(_serialize(obj), default=json_datetime_serializer)
+
+
+def _collect_pager(pager, limit: int = 100):
+    """Materialize up to `limit` items from a SyncPager into a list of dicts."""
+    items = []
+    for i, item in enumerate(pager):
+        if i >= limit:
+            break
+        items.append(_serialize(item))
+    return items
 
 # ============================================
 # == Label Studio Tool Definitions          ==
@@ -424,3 +476,944 @@ def create_label_studio_prediction_tool(
         # Catch errors specifically during the prediction creation API call OR manual serialization
         import traceback
         return f"Error during Label Studio prediction create/serialize: {type(e).__name__} - {e}\n{traceback.format_exc()}"
+
+
+# Helper used by the tools below to drop unset/None keyword arguments so the SDK
+# uses its own defaults instead of sending explicit nulls.
+def _clean(**kwargs):
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+# ============================================================
+# == Projects (additional CRUD)                             ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_project_tool(
+    project_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    label_config: Optional[str] = None,
+    expert_instruction: Optional[str] = None,
+    show_instruction: Optional[bool] = None,
+    show_skip_button: Optional[bool] = None,
+    enable_empty_annotation: Optional[bool] = None,
+    show_annotation_history: Optional[bool] = None,
+    reveal_preannotations_interactively: Optional[bool] = None,
+    show_collab_predictions: Optional[bool] = None,
+    maximum_annotations: Optional[int] = None,
+    color: Optional[str] = None,
+    workspace: Optional[int] = None,
+    model_version: Optional[str] = None,
+) -> str:
+    """Updates settings for an existing Label Studio project.
+
+    Only the parameters you pass are changed; omit any you don't want to modify.
+    Use `update_label_studio_project_config_tool` if you only need to change the
+    labeling configuration XML.
+
+    Args:
+        project_id (int): ID of the project to update. REQUIRED.
+        title, description, label_config, ... : Optional fields to update.
+    """
+    updated = ls.projects.update(
+        id=project_id,
+        **_clean(
+            title=title,
+            description=description,
+            label_config=label_config,
+            expert_instruction=expert_instruction,
+            show_instruction=show_instruction,
+            show_skip_button=show_skip_button,
+            enable_empty_annotation=enable_empty_annotation,
+            show_annotation_history=show_annotation_history,
+            reveal_preannotations_interactively=reveal_preannotations_interactively,
+            show_collab_predictions=show_collab_predictions,
+            maximum_annotations=maximum_annotations,
+            color=color,
+            workspace=workspace,
+            model_version=model_version,
+        ),
+    )
+    return _json(updated)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_project_tool(project_id: int) -> str:
+    """Permanently deletes a Label Studio project and all of its tasks/annotations.
+
+    Args:
+        project_id (int): ID of the project to delete. REQUIRED.
+    """
+    ls.projects.delete(id=project_id)
+    return json.dumps({"message": f"Project {project_id} deleted successfully.", "id": project_id})
+
+
+@mcp.tool()
+@require_ls_connection
+def validate_label_studio_project_config_tool(project_id: int, label_config: str) -> str:
+    """Validates an XML labeling configuration against a project without saving it.
+
+    Args:
+        project_id (int): ID of the project to validate against. REQUIRED.
+        label_config (str): The XML labeling configuration string to validate. REQUIRED.
+    """
+    result = ls.projects.validate_config(id=project_id, label_config=label_config)
+    return _json(result)
+
+
+# ============================================================
+# == Tasks (additional CRUD)                                ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_task_tool(project_id: int, data: Dict[str, Any]) -> str:
+    """Creates a single task in a Label Studio project.
+
+    Args:
+        project_id (int): ID of the target project. REQUIRED.
+        data (Dict[str, Any]): The task data payload, e.g. {"text": "Hello world"}. REQUIRED.
+    """
+    task = ls.tasks.create(project=project_id, data=data)
+    return _json(task)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_task_tool(
+    task_id: int,
+    data: Optional[Dict[str, Any]] = None,
+    project: Optional[int] = None,
+) -> str:
+    """Updates the data payload of an existing task.
+
+    Args:
+        task_id (int): ID of the task to update. REQUIRED.
+        data (Dict[str, Any]): New data payload for the task.
+        project (int): Optionally move the task to a different project.
+    """
+    task = ls.tasks.update(id=str(task_id), **_clean(data=data, project=project))
+    return _json(task)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_task_tool(task_id: int) -> str:
+    """Deletes a single task (and its annotations) by ID.
+
+    Args:
+        task_id (int): ID of the task to delete. REQUIRED.
+    """
+    ls.tasks.delete(id=str(task_id))
+    return json.dumps({"message": f"Task {task_id} deleted successfully.", "id": task_id})
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_all_label_studio_project_tasks_tool(project_id: int) -> str:
+    """Deletes ALL tasks (and their annotations) from a project. Irreversible.
+
+    Args:
+        project_id (int): ID of the project whose tasks should be deleted. REQUIRED.
+    """
+    ls.tasks.delete_all_tasks(id=project_id)
+    return json.dumps({"message": f"All tasks deleted from project {project_id}.", "project_id": project_id})
+
+
+# ============================================================
+# == Annotations                                            ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_task_annotations_tool(task_id: int) -> str:
+    """Lists all annotations for a specific task (Annotations API).
+
+    Args:
+        task_id (int): ID of the task. REQUIRED.
+    """
+    annotations = ls.annotations.list(id=task_id)
+    return _json(annotations)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_annotation_tool(annotation_id: int) -> str:
+    """Retrieves a single annotation by its ID.
+
+    Args:
+        annotation_id (int): ID of the annotation. REQUIRED.
+    """
+    annotation = ls.annotations.get(id=annotation_id)
+    return _json(annotation)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_annotation_tool(
+    task_id: int,
+    result: List[Dict[str, Any]],
+    completed_by: Optional[int] = None,
+    ground_truth: Optional[bool] = None,
+    was_cancelled: Optional[bool] = None,
+    lead_time: Optional[float] = None,
+) -> str:
+    """Creates an annotation for a task.
+
+    Args:
+        task_id (int): ID of the task to annotate. REQUIRED.
+        result (List[Dict[str, Any]]): Annotation result in Label Studio format. REQUIRED.
+        completed_by (int): Optional user ID that produced the annotation.
+        ground_truth (bool): Optionally mark the annotation as ground truth.
+        was_cancelled (bool): Optionally mark the annotation as skipped/cancelled.
+        lead_time (float): Optional time spent (seconds) producing the annotation.
+    """
+    annotation = ls.annotations.create(
+        id=task_id,
+        result=result,
+        **_clean(
+            completed_by=completed_by,
+            ground_truth=ground_truth,
+            was_cancelled=was_cancelled,
+            lead_time=lead_time,
+        ),
+    )
+    return _json(annotation)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_annotation_tool(
+    annotation_id: int,
+    result: Optional[List[Dict[str, Any]]] = None,
+    ground_truth: Optional[bool] = None,
+    was_cancelled: Optional[bool] = None,
+    lead_time: Optional[float] = None,
+) -> str:
+    """Updates an existing annotation.
+
+    Args:
+        annotation_id (int): ID of the annotation to update. REQUIRED.
+        result (List[Dict[str, Any]]): New annotation result in Label Studio format.
+        ground_truth (bool): Optionally toggle ground-truth flag.
+        was_cancelled (bool): Optionally toggle the skipped/cancelled flag.
+        lead_time (float): Optional time spent (seconds) producing the annotation.
+    """
+    annotation = ls.annotations.update(
+        id=annotation_id,
+        **_clean(
+            result=result,
+            ground_truth=ground_truth,
+            was_cancelled=was_cancelled,
+            lead_time=lead_time,
+        ),
+    )
+    return _json(annotation)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_annotation_tool(annotation_id: int) -> str:
+    """Deletes an annotation by ID.
+
+    Args:
+        annotation_id (int): ID of the annotation to delete. REQUIRED.
+    """
+    ls.annotations.delete(id=annotation_id)
+    return json.dumps({"message": f"Annotation {annotation_id} deleted successfully.", "id": annotation_id})
+
+
+# ============================================================
+# == Predictions (additional CRUD)                          ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_predictions_tool(
+    task_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+) -> str:
+    """Lists predictions, optionally filtered by task and/or project.
+
+    Args:
+        task_id (int): Optional task ID to filter predictions.
+        project_id (int): Optional project ID to filter predictions.
+    """
+    predictions = ls.predictions.list(**_clean(task=task_id, project=project_id))
+    return _json(predictions)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_prediction_tool(prediction_id: int) -> str:
+    """Retrieves a single prediction by ID.
+
+    Args:
+        prediction_id (int): ID of the prediction. REQUIRED.
+    """
+    prediction = ls.predictions.get(id=prediction_id)
+    return _json(prediction)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_prediction_tool(
+    prediction_id: int,
+    result: Optional[List[Dict[str, Any]]] = None,
+    task_id: Optional[int] = None,
+    model_version: Optional[str] = None,
+    score: Optional[float] = None,
+) -> str:
+    """Updates an existing prediction.
+
+    Args:
+        prediction_id (int): ID of the prediction to update. REQUIRED.
+        result (List[Dict[str, Any]]): New prediction result in Label Studio format.
+        task_id (int): Optionally reassign the prediction to a different task.
+        model_version (str): Optional model version identifier.
+        score (float): Optional confidence score (0.0 - 1.0).
+    """
+    prediction = ls.predictions.update(
+        id=prediction_id,
+        **_clean(result=result, task=task_id, model_version=model_version, score=score),
+    )
+    return _json(prediction)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_prediction_tool(prediction_id: int) -> str:
+    """Deletes a prediction by ID.
+
+    Args:
+        prediction_id (int): ID of the prediction to delete. REQUIRED.
+    """
+    ls.predictions.delete(id=prediction_id)
+    return json.dumps({"message": f"Prediction {prediction_id} deleted successfully.", "id": prediction_id})
+
+
+# ============================================================
+# == Users                                                  ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_users_tool() -> str:
+    """Lists all users in the Label Studio instance."""
+    users = ls.users.list()
+    return _json(users)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_user_tool(user_id: int) -> str:
+    """Retrieves a single user by ID.
+
+    Args:
+        user_id (int): ID of the user. REQUIRED.
+    """
+    user = ls.users.get(id=user_id)
+    return _json(user)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_current_user_tool() -> str:
+    """Returns the currently authenticated user (whoami)."""
+    user = ls.users.whoami()
+    return _json(user)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_user_tool(
+    email: str,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    username: Optional[str] = None,
+    phone: Optional[str] = None,
+) -> str:
+    """Creates a new user.
+
+    Args:
+        email (str): Email address for the new user. REQUIRED.
+        first_name, last_name, username, phone: Optional profile fields.
+    """
+    user = ls.users.create(
+        email=email,
+        **_clean(first_name=first_name, last_name=last_name, username=username, phone=phone),
+    )
+    return _json(user)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_user_tool(
+    user_id: int,
+    email: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    username: Optional[str] = None,
+    phone: Optional[str] = None,
+) -> str:
+    """Updates an existing user's profile.
+
+    Args:
+        user_id (int): ID of the user to update. REQUIRED.
+        email, first_name, last_name, username, phone: Optional fields to update.
+    """
+    user = ls.users.update(
+        id=user_id,
+        **_clean(email=email, first_name=first_name, last_name=last_name, username=username, phone=phone),
+    )
+    return _json(user)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_user_tool(user_id: int) -> str:
+    """Deletes a user by ID.
+
+    Args:
+        user_id (int): ID of the user to delete. REQUIRED.
+    """
+    ls.users.delete(id=user_id)
+    return json.dumps({"message": f"User {user_id} deleted successfully.", "id": user_id})
+
+
+# ============================================================
+# == Workspaces                                             ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_workspaces_tool() -> str:
+    """Lists all workspaces."""
+    workspaces = ls.workspaces.list()
+    return _json(workspaces)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_workspace_tool(workspace_id: int) -> str:
+    """Retrieves a single workspace by ID.
+
+    Args:
+        workspace_id (int): ID of the workspace. REQUIRED.
+    """
+    workspace = ls.workspaces.get(id=workspace_id)
+    return _json(workspace)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_workspace_tool(
+    title: str,
+    description: Optional[str] = None,
+    color: Optional[str] = None,
+    is_public: Optional[bool] = None,
+) -> str:
+    """Creates a new workspace.
+
+    Args:
+        title (str): Title of the workspace. REQUIRED.
+        description (str): Optional description.
+        color (str): Optional hex color for the workspace.
+        is_public (bool): Optionally mark the workspace as public.
+    """
+    workspace = ls.workspaces.create(
+        title=title,
+        **_clean(description=description, color=color, is_public=is_public),
+    )
+    return _json(workspace)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_workspace_tool(
+    workspace_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    color: Optional[str] = None,
+    is_public: Optional[bool] = None,
+    is_archived: Optional[bool] = None,
+) -> str:
+    """Updates an existing workspace.
+
+    Args:
+        workspace_id (int): ID of the workspace to update. REQUIRED.
+        title, description, color, is_public, is_archived: Optional fields to update.
+    """
+    workspace = ls.workspaces.update(
+        id=workspace_id,
+        **_clean(title=title, description=description, color=color, is_public=is_public, is_archived=is_archived),
+    )
+    return _json(workspace)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_workspace_tool(workspace_id: int) -> str:
+    """Deletes a workspace by ID.
+
+    Args:
+        workspace_id (int): ID of the workspace to delete. REQUIRED.
+    """
+    ls.workspaces.delete(id=workspace_id)
+    return json.dumps({"message": f"Workspace {workspace_id} deleted successfully.", "id": workspace_id})
+
+
+# ============================================================
+# == Views (Data Manager tabs)                              ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_views_tool(project_id: Optional[int] = None) -> str:
+    """Lists Data Manager views (tabs), optionally filtered by project.
+
+    Args:
+        project_id (int): Optional project ID to filter the views.
+    """
+    views = ls.views.list(**_clean(project=project_id))
+    return _json(views)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_view_tool(view_id: int) -> str:
+    """Retrieves a single Data Manager view by ID.
+
+    Args:
+        view_id (int): ID of the view. REQUIRED.
+    """
+    view = ls.views.get(id=str(view_id))
+    return _json(view)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_view_tool(project_id: int, data: Optional[Dict[str, Any]] = None) -> str:
+    """Creates a Data Manager view (tab) for a project.
+
+    Args:
+        project_id (int): ID of the project the view belongs to. REQUIRED.
+        data (Dict[str, Any]): Optional view configuration (filters, ordering,
+            title, etc.), e.g. {"title": "My Tab", "filters": {...}}.
+    """
+    view = ls.views.create(project=project_id, **_clean(data=data))
+    return _json(view)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_view_tool(
+    view_id: int,
+    data: Optional[Dict[str, Any]] = None,
+    project_id: Optional[int] = None,
+) -> str:
+    """Updates a Data Manager view.
+
+    Args:
+        view_id (int): ID of the view to update. REQUIRED.
+        data (Dict[str, Any]): New view configuration (filters, ordering, title, etc.).
+        project_id (int): Optional project association.
+    """
+    view = ls.views.update(id=str(view_id), **_clean(data=data, project=project_id))
+    return _json(view)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_view_tool(view_id: int) -> str:
+    """Deletes a Data Manager view by ID.
+
+    Args:
+        view_id (int): ID of the view to delete. REQUIRED.
+    """
+    ls.views.delete(id=str(view_id))
+    return json.dumps({"message": f"View {view_id} deleted successfully.", "id": view_id})
+
+
+# ============================================================
+# == Comments                                               ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_comments_tool(
+    project_id: Optional[int] = None,
+    annotation_id: Optional[int] = None,
+) -> str:
+    """Lists comments, optionally filtered by project and/or annotation.
+
+    Args:
+        project_id (int): Optional project ID filter.
+        annotation_id (int): Optional annotation ID filter.
+    """
+    comments = ls.comments.list(**_clean(project=project_id, annotation=annotation_id))
+    return _json(comments)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_comment_tool(comment_id: int) -> str:
+    """Retrieves a single comment by ID.
+
+    Args:
+        comment_id (int): ID of the comment. REQUIRED.
+    """
+    comment = ls.comments.get(id=comment_id)
+    return _json(comment)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_comment_tool(
+    annotation_id: int,
+    text: str,
+    is_resolved: Optional[bool] = None,
+) -> str:
+    """Creates a comment on an annotation.
+
+    Args:
+        annotation_id (int): ID of the annotation to comment on. REQUIRED.
+        text (str): The comment text. REQUIRED.
+        is_resolved (bool): Optionally mark the comment as resolved.
+    """
+    comment = ls.comments.create(annotation=annotation_id, text=text, **_clean(is_resolved=is_resolved))
+    return _json(comment)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_comment_tool(
+    comment_id: int,
+    text: Optional[str] = None,
+    is_resolved: Optional[bool] = None,
+) -> str:
+    """Updates a comment.
+
+    Args:
+        comment_id (int): ID of the comment to update. REQUIRED.
+        text (str): Optional new comment text.
+        is_resolved (bool): Optionally toggle the resolved flag.
+    """
+    comment = ls.comments.update(id=comment_id, **_clean(text=text, is_resolved=is_resolved))
+    return _json(comment)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_comment_tool(comment_id: int) -> str:
+    """Deletes a comment by ID.
+
+    Args:
+        comment_id (int): ID of the comment to delete. REQUIRED.
+    """
+    ls.comments.delete(id=comment_id)
+    return json.dumps({"message": f"Comment {comment_id} deleted successfully.", "id": comment_id})
+
+
+# ============================================================
+# == Webhooks                                               ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_webhooks_tool(project_id: Optional[int] = None) -> str:
+    """Lists webhooks, optionally filtered by project.
+
+    Args:
+        project_id (int): Optional project ID filter.
+    """
+    webhooks = ls.webhooks.list(**_clean(project=str(project_id) if project_id is not None else None))
+    return _json(webhooks)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_webhook_tool(webhook_id: int) -> str:
+    """Retrieves a single webhook by ID.
+
+    Args:
+        webhook_id (int): ID of the webhook. REQUIRED.
+    """
+    webhook = ls.webhooks.get(id=webhook_id)
+    return _json(webhook)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_webhook_tool(
+    url: str,
+    project: Optional[int] = None,
+    send_payload: Optional[bool] = None,
+    send_for_all_actions: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    actions: Optional[List[str]] = None,
+    headers: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Creates a webhook.
+
+    Args:
+        url (str): Destination URL that will receive webhook events. REQUIRED.
+        project (int): Optional project to scope the webhook to (omit for org-wide).
+        send_payload (bool): Whether to include the payload in the request body.
+        send_for_all_actions (bool): Trigger for all actions instead of a subset.
+        is_active (bool): Whether the webhook is active.
+        actions (List[str]): Specific actions to subscribe to, e.g.
+            ["TASKS_CREATED", "ANNOTATION_CREATED"].
+        headers (Dict[str, Any]): Optional custom HTTP headers to send.
+    """
+    webhook = ls.webhooks.create(
+        url=url,
+        **_clean(
+            project=project,
+            send_payload=send_payload,
+            send_for_all_actions=send_for_all_actions,
+            is_active=is_active,
+            actions=actions,
+            headers=headers,
+        ),
+    )
+    return _json(webhook)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_webhook_tool(
+    webhook_id: int,
+    url: str,
+    send_payload: Optional[bool] = None,
+    send_for_all_actions: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    actions: Optional[List[str]] = None,
+) -> str:
+    """Updates an existing webhook.
+
+    Args:
+        webhook_id (int): ID of the webhook to update. REQUIRED.
+        url (str): Destination URL for the webhook. REQUIRED.
+        send_payload (bool): Whether to include the payload in the request body.
+        send_for_all_actions (bool): Trigger for all actions instead of a subset.
+        is_active (bool): Whether the webhook is active.
+        actions (List[str]): Specific actions to subscribe to.
+    """
+    webhook = ls.webhooks.update(
+        id_=webhook_id,
+        url=url,
+        webhook_serializer_for_update_url=url,
+        **_clean(
+            send_payload=send_payload,
+            send_for_all_actions=send_for_all_actions,
+            is_active=is_active,
+            actions=actions,
+        ),
+    )
+    return _json(webhook)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_webhook_tool(webhook_id: int) -> str:
+    """Deletes a webhook by ID.
+
+    Args:
+        webhook_id (int): ID of the webhook to delete. REQUIRED.
+    """
+    ls.webhooks.delete(id=webhook_id)
+    return json.dumps({"message": f"Webhook {webhook_id} deleted successfully.", "id": webhook_id})
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_webhook_actions_tool() -> str:
+    """Returns the list of available webhook actions/events and their metadata."""
+    return _json(ls.webhooks.info())
+
+
+# ============================================================
+# == ML Backends                                            ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_ml_backends_tool(project_id: Optional[int] = None) -> str:
+    """Lists connected ML backends, optionally filtered by project.
+
+    Args:
+        project_id (int): Optional project ID filter.
+    """
+    backends = ls.ml.list(**_clean(project=project_id))
+    return _json(backends)
+
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
+    """Retrieves a single ML backend by ID.
+
+    Args:
+        ml_backend_id (int): ID of the ML backend. REQUIRED.
+    """
+    backend = ls.ml.get(id=ml_backend_id)
+    return _json(backend)
+
+
+@mcp.tool()
+@require_ls_connection
+def create_label_studio_ml_backend_tool(
+    url: str,
+    project: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    is_interactive: Optional[bool] = None,
+) -> str:
+    """Connects a new ML backend to a project.
+
+    Args:
+        url (str): URL of the ML backend server. REQUIRED.
+        project (int): ID of the project to attach the backend to. REQUIRED.
+        title (str): Optional display title.
+        description (str): Optional description.
+        is_interactive (bool): Whether the backend supports interactive pre-annotation.
+    """
+    backend = ls.ml.create(
+        url=url,
+        project=project,
+        **_clean(title=title, description=description, is_interactive=is_interactive),
+    )
+    return _json(backend)
+
+
+@mcp.tool()
+@require_ls_connection
+def update_label_studio_ml_backend_tool(
+    ml_backend_id: int,
+    url: Optional[str] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    is_interactive: Optional[bool] = None,
+) -> str:
+    """Updates an existing ML backend.
+
+    Args:
+        ml_backend_id (int): ID of the ML backend to update. REQUIRED.
+        url, title, description, is_interactive: Optional fields to update.
+    """
+    backend = ls.ml.update(
+        id=ml_backend_id,
+        **_clean(url=url, title=title, description=description, is_interactive=is_interactive),
+    )
+    return _json(backend)
+
+
+@mcp.tool()
+@require_ls_connection
+def delete_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
+    """Deletes (disconnects) an ML backend by ID.
+
+    Args:
+        ml_backend_id (int): ID of the ML backend to delete. REQUIRED.
+    """
+    ls.ml.delete(id=ml_backend_id)
+    return json.dumps({"message": f"ML backend {ml_backend_id} deleted successfully.", "id": ml_backend_id})
+
+
+@mcp.tool()
+@require_ls_connection
+def train_label_studio_ml_backend_tool(ml_backend_id: int, use_ground_truth: Optional[bool] = None) -> str:
+    """Triggers a training run on an ML backend.
+
+    Args:
+        ml_backend_id (int): ID of the ML backend to train. REQUIRED.
+        use_ground_truth (bool): Whether to train only on ground-truth annotations.
+    """
+    ls.ml.train(id=ml_backend_id, **_clean(use_ground_truth=use_ground_truth))
+    return json.dumps({"message": f"Training triggered for ML backend {ml_backend_id}.", "id": ml_backend_id})
+
+
+# ============================================================
+# == Data Manager Actions (bulk operations)                 ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def run_label_studio_action_tool(
+    action_id: str,
+    project_id: int,
+    view_id: Optional[int] = None,
+    selected_task_ids: Optional[List[int]] = None,
+    all_tasks: Optional[bool] = None,
+) -> str:
+    """Runs a Data Manager bulk action on a project's tasks.
+
+    Args:
+        action_id (str): Action to run. One of: 'retrieve_tasks_predictions',
+            'predictions_to_annotations', 'remove_duplicates', 'delete_tasks',
+            'delete_ground_truths', 'delete_tasks_annotations',
+            'delete_tasks_reviews', 'delete_tasks_predictions',
+            'delete_reviewers', 'delete_annotators'. REQUIRED.
+        project_id (int): ID of the target project. REQUIRED.
+        view_id (int): Optional Data Manager view (tab) ID to scope the action.
+        selected_task_ids (List[int]): Specific task IDs to act on. If provided,
+            only these tasks are included.
+        all_tasks (bool): If True, apply the action to all tasks (excluding none).
+    """
+    kwargs = {"id": action_id, "project": project_id}
+    if view_id is not None:
+        kwargs["view"] = view_id
+    if selected_task_ids is not None:
+        kwargs["selected_items"] = {"all": False, "included": selected_task_ids}
+    elif all_tasks:
+        kwargs["selected_items"] = {"all": True, "excluded": []}
+    ls.actions.create(**kwargs)
+    return json.dumps({
+        "message": f"Action '{action_id}' executed on project {project_id}.",
+        "action_id": action_id,
+        "project_id": project_id,
+    })
+
+
+# ============================================================
+# == Exports                                                ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def export_label_studio_project_tasks_tool(project_id: int) -> str:
+    """Exports a project's tasks and annotations as JSON.
+
+    Returns the exported data (list of tasks with their annotations) as a JSON string.
+
+    Args:
+        project_id (int): ID of the project to export. REQUIRED.
+    """
+    exported = ls.projects.exports.as_json(project_id)
+    return _json(exported)
+
+
+@mcp.tool()
+@require_ls_connection
+def list_label_studio_export_formats_tool(project_id: int) -> str:
+    """Lists the export formats available for a project.
+
+    Args:
+        project_id (int): ID of the project. REQUIRED.
+    """
+    return _json(ls.projects.exports.list_formats(project_id))
+
+
+# ============================================================
+# == Instance / version info                                ==
+# ============================================================
+
+@mcp.tool()
+@require_ls_connection
+def get_label_studio_version_tool() -> str:
+    """Returns version and build information for the Label Studio instance."""
+    return _json(ls.versions.get())
