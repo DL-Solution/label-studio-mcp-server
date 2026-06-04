@@ -79,7 +79,7 @@ requires no open ports.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `LABEL_STUDIO_API_KEY` | yes | Your Label Studio access token. |
-| `LABEL_STUDIO_URL` | no | Base URL of the instance (default `http://localhost:8080`). Any reachable host works, e.g. an internal `https://ls.internal.example`. |
+| `LABEL_STUDIO_URL` | no | Base URL of the instance (default `http://localhost:8080`). Any reachable host works, e.g. an internal `https://label-studio.internal.example`. |
 | `LABEL_STUDIO_CA_BUNDLE` | no | Path to a PEM file with the internal/corporate CA (e.g. an Active Directory CA) that issued the Label Studio **HTTPS** certificate. Needed so TLS verification succeeds for internally-issued certs. |
 | `LABEL_STUDIO_VERIFY_SSL` | no | Set to `false` to disable TLS certificate verification entirely. Insecure — only for trusted internal networks or testing. Defaults to enabled. |
 
@@ -88,7 +88,7 @@ requires no open ports.
 > the **operating system's certificate store** automatically. On a domain-joined
 > machine this means an internal CA (e.g. an Active Directory CA whose root is
 > already installed via group policy) is trusted out of the box — no extra
-> configuration needed for `https://...internal.example`-style URLs.
+> configuration needed for internal `https://`-style URLs.
 >
 > Use `LABEL_STUDIO_CA_BUNDLE` only when the issuing CA is **not** in the OS trust
 > store — for example a plain Linux container, CI, or an Azure deployment that
