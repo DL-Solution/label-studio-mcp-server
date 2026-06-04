@@ -13,6 +13,7 @@
     "type": "git",
     "url": "https://github.com/HumanSignal/label-studio-mcp-server"
   },
+  "icon": "icon.png",
   "homepage": "https://labelstud.io/",
   "documentation": "https://github.com/HumanSignal/label-studio-mcp-server#readme",
   "keywords": ["label-studio", "annotation", "labeling", "machine-learning", "data-labeling"],
