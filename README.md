@@ -114,8 +114,23 @@ mcpb validate manifest.json     # optional sanity check
 mcpb pack . dist/label-studio.mcpb
 ```
 
+> **Versioning:** the version lives in both `manifest.json` and `pyproject.toml`.
+> Bump them together with the helper script (never edit by hand):
+>
+> ```bash
+> python scripts/bump_version.py patch     # or: minor | major | 1.4.2
+> python scripts/bump_version.py --show     # print current version
+> python scripts/bump_version.py --check    # verify the two files agree
+> ```
+>
+> CI runs `--check` and fails on drift. Bumping the `version` (while keeping the
+> manifest `name` and `author` unchanged) is what lets Claude Desktop recognise a
+> reinstalled `.mcpb` as an **in-place update and preserve the entered settings**
+> (URL / API key). Changing `name` or `author` creates a new extension identity
+> and requires re-entering settings once.
+
 > **Releasing:** the workflow checks that the pushed tag (`vX.Y.Z`) matches the
-> `version` in `manifest.json`, so bump the manifest before tagging. To publish a
+> `version` in `manifest.json`, so bump the version before tagging. To publish a
 > **code-signed** bundle, add the repository secrets `MCPB_CERT_PEM` and
 > `MCPB_KEY_PEM` (a PEM certificate that chains to a trusted root and its private
 > key); the workflow then signs and verifies the bundle automatically. Without
