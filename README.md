@@ -169,7 +169,11 @@ uv sync
 
 ## Tools
 
-The MCP server exposes the following tools:
+The MCP server exposes the following tools. Each tool is annotated with MCP
+behaviour hints (`readOnlyHint` / `destructiveHint`), so clients such as Claude
+automatically group them in their permission UI into **Read-only tools** (all
+`get_*` / `list_*` / `validate_*` / `export_*`), **Write/delete tools** (`create_*`,
+`update_*`, `import_*`, `train_*`, and the `delete_*` / destructive actions).
 
 ### Project Management
 
