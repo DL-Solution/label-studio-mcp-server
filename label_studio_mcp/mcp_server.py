@@ -1,6 +1,7 @@
 from typing import Any, List, Dict, Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 import os
 import json
 from label_studio_sdk.client import LabelStudio
@@ -14,6 +15,33 @@ from .mcp_env import LABEL_STUDIO_URL, LABEL_STUDIO_API_KEY, ls
 
 # Initialize FastMCP server
 mcp = FastMCP("label-studio-mcp")
+
+
+# --- Tool registration helpers with MCP annotations ---
+# MCP clients (e.g. Claude) use these annotation hints to group tools in their
+# permission UI into "Read-only", "Write/delete" and "Other" categories, and to
+# decide how cautious to be before invoking a tool. Use the wrapper that matches
+# a tool's behaviour instead of the bare ``@mcp.tool()``.
+
+def read_tool(**kwargs):
+    """Register a read-only tool (no side effects). -> "Read-only tools"."""
+    return mcp.tool(annotations=ToolAnnotations(readOnlyHint=True), **kwargs)
+
+
+def write_tool(**kwargs):
+    """Register a mutating, non-destructive tool. -> "Write/delete tools"."""
+    return mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+        **kwargs,
+    )
+
+
+def destructive_tool(**kwargs):
+    """Register a destructive tool (deletes/irreversible). -> "Write/delete tools"."""
+    return mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+        **kwargs,
+    )
 
 # Helper to handle potential lack of LS connection
 def require_ls_connection(func):
@@ -102,7 +130,7 @@ def _collect_pager(pager, limit: int = 100):
 # == Label Studio Tool Definitions          ==
 # ============================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_projects_tool() -> str:
     """Lists available Label Studio projects (Tool version)."""
@@ -124,7 +152,7 @@ def get_label_studio_projects_tool() -> str:
 
     return json.dumps(projects_summary)
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_project_details_tool(project_id: int) -> str:
     """Provides details for a specific Label Studio project (Tool version)."""
@@ -143,14 +171,14 @@ def get_label_studio_project_details_tool(project_id: int) -> str:
         # Fallback if direct serialization is not available
         return json.dumps({"id": project.id, "title": getattr(project, 'title', 'N/A')})
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_project_config_tool(project_id: int) -> str:
     """Provides the XML labeling configuration for a Label Studio project (Tool version)."""
     project = ls.projects.get(id=project_id)
     return project.label_config
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_project_tasks_tool(project_id: int) -> str:
     """Lists tasks within a specific Label Studio project (Tool version). Fetches up to 50 tasks.
@@ -176,7 +204,7 @@ def list_label_studio_project_tasks_tool(project_id: int) -> str:
         
     return json.dumps(task_list_summary)
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_task_data_tool(project_id: int, task_id: int) -> str:
     """Provides the data payload for a specific Label Studio task (Tool version)."""
@@ -187,7 +215,7 @@ def get_label_studio_task_data_tool(project_id: int, task_id: int) -> str:
     else:
         return json.dumps({}) # Return empty dict if data attribute missing
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_task_annotations_tool(project_id: int, task_id: int) -> str:
     """Provides annotations for a specific Label Studio task (Tool version)."""
@@ -212,7 +240,7 @@ def get_label_studio_task_annotations_tool(project_id: int, task_id: int) -> str
 
     return json.dumps(serialized_annotations)
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_project_tool(
     title: str, 
@@ -283,7 +311,7 @@ def create_label_studio_project_tool(
                 
     return json.dumps(response_data)
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_project_config_tool(
     project_id: int,
@@ -334,7 +362,7 @@ def update_label_studio_project_config_tool(
         import traceback
         return f"Error during Label Studio project config update API call: {type(e).__name__} - {e}\n{traceback.format_exc()}"
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def import_label_studio_project_tasks_tool(
     project_id: int,
@@ -415,7 +443,7 @@ def import_label_studio_project_tasks_tool(
 
     return json.dumps(final_response)
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_prediction_tool(
     task_id: int,
@@ -488,7 +516,7 @@ def _clean(**kwargs):
 # == Projects (additional CRUD)                             ==
 # ============================================================
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_project_tool(
     project_id: int,
@@ -539,7 +567,7 @@ def update_label_studio_project_tool(
     return _json(updated)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_project_tool(project_id: int) -> str:
     """Permanently deletes a Label Studio project and all of its tasks/annotations.
@@ -551,7 +579,7 @@ def delete_label_studio_project_tool(project_id: int) -> str:
     return json.dumps({"message": f"Project {project_id} deleted successfully.", "id": project_id})
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def validate_label_studio_project_config_tool(project_id: int, label_config: str) -> str:
     """Validates an XML labeling configuration against a project without saving it.
@@ -568,7 +596,7 @@ def validate_label_studio_project_config_tool(project_id: int, label_config: str
 # == Tasks (additional CRUD)                                ==
 # ============================================================
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_task_tool(project_id: int, data: Dict[str, Any]) -> str:
     """Creates a single task in a Label Studio project.
@@ -581,7 +609,7 @@ def create_label_studio_task_tool(project_id: int, data: Dict[str, Any]) -> str:
     return _json(task)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_task_tool(
     task_id: int,
@@ -599,7 +627,7 @@ def update_label_studio_task_tool(
     return _json(task)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_task_tool(task_id: int) -> str:
     """Deletes a single task (and its annotations) by ID.
@@ -611,7 +639,7 @@ def delete_label_studio_task_tool(task_id: int) -> str:
     return json.dumps({"message": f"Task {task_id} deleted successfully.", "id": task_id})
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_all_label_studio_project_tasks_tool(project_id: int) -> str:
     """Deletes ALL tasks (and their annotations) from a project. Irreversible.
@@ -627,7 +655,7 @@ def delete_all_label_studio_project_tasks_tool(project_id: int) -> str:
 # == Annotations                                            ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_task_annotations_tool(task_id: int) -> str:
     """Lists all annotations for a specific task (Annotations API).
@@ -639,7 +667,7 @@ def list_label_studio_task_annotations_tool(task_id: int) -> str:
     return _json(annotations)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_annotation_tool(annotation_id: int) -> str:
     """Retrieves a single annotation by its ID.
@@ -651,7 +679,7 @@ def get_label_studio_annotation_tool(annotation_id: int) -> str:
     return _json(annotation)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_annotation_tool(
     task_id: int,
@@ -684,7 +712,7 @@ def create_label_studio_annotation_tool(
     return _json(annotation)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_annotation_tool(
     annotation_id: int,
@@ -714,7 +742,7 @@ def update_label_studio_annotation_tool(
     return _json(annotation)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_annotation_tool(annotation_id: int) -> str:
     """Deletes an annotation by ID.
@@ -730,7 +758,7 @@ def delete_label_studio_annotation_tool(annotation_id: int) -> str:
 # == Predictions (additional CRUD)                          ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_predictions_tool(
     task_id: Optional[int] = None,
@@ -746,7 +774,7 @@ def list_label_studio_predictions_tool(
     return _json(predictions)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_prediction_tool(prediction_id: int) -> str:
     """Retrieves a single prediction by ID.
@@ -758,7 +786,7 @@ def get_label_studio_prediction_tool(prediction_id: int) -> str:
     return _json(prediction)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_prediction_tool(
     prediction_id: int,
@@ -783,7 +811,7 @@ def update_label_studio_prediction_tool(
     return _json(prediction)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_prediction_tool(prediction_id: int) -> str:
     """Deletes a prediction by ID.
@@ -799,7 +827,7 @@ def delete_label_studio_prediction_tool(prediction_id: int) -> str:
 # == Users                                                  ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_users_tool() -> str:
     """Lists all users in the Label Studio instance."""
@@ -807,7 +835,7 @@ def list_label_studio_users_tool() -> str:
     return _json(users)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_user_tool(user_id: int) -> str:
     """Retrieves a single user by ID.
@@ -819,7 +847,7 @@ def get_label_studio_user_tool(user_id: int) -> str:
     return _json(user)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_current_user_tool() -> str:
     """Returns the currently authenticated user (whoami)."""
@@ -827,7 +855,7 @@ def get_label_studio_current_user_tool() -> str:
     return _json(user)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_user_tool(
     email: str,
@@ -849,7 +877,7 @@ def create_label_studio_user_tool(
     return _json(user)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_user_tool(
     user_id: int,
@@ -872,7 +900,7 @@ def update_label_studio_user_tool(
     return _json(user)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_user_tool(user_id: int) -> str:
     """Deletes a user by ID.
@@ -888,7 +916,7 @@ def delete_label_studio_user_tool(user_id: int) -> str:
 # == Workspaces                                             ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_workspaces_tool() -> str:
     """Lists all workspaces."""
@@ -896,7 +924,7 @@ def list_label_studio_workspaces_tool() -> str:
     return _json(workspaces)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_workspace_tool(workspace_id: int) -> str:
     """Retrieves a single workspace by ID.
@@ -908,7 +936,7 @@ def get_label_studio_workspace_tool(workspace_id: int) -> str:
     return _json(workspace)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_workspace_tool(
     title: str,
@@ -931,7 +959,7 @@ def create_label_studio_workspace_tool(
     return _json(workspace)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_workspace_tool(
     workspace_id: int,
@@ -954,7 +982,7 @@ def update_label_studio_workspace_tool(
     return _json(workspace)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_workspace_tool(workspace_id: int) -> str:
     """Deletes a workspace by ID.
@@ -970,7 +998,7 @@ def delete_label_studio_workspace_tool(workspace_id: int) -> str:
 # == Views (Data Manager tabs)                              ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_views_tool(project_id: Optional[int] = None) -> str:
     """Lists Data Manager views (tabs), optionally filtered by project.
@@ -982,7 +1010,7 @@ def list_label_studio_views_tool(project_id: Optional[int] = None) -> str:
     return _json(views)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_view_tool(view_id: int) -> str:
     """Retrieves a single Data Manager view by ID.
@@ -994,7 +1022,7 @@ def get_label_studio_view_tool(view_id: int) -> str:
     return _json(view)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_view_tool(project_id: int, data: Optional[Dict[str, Any]] = None) -> str:
     """Creates a Data Manager view (tab) for a project.
@@ -1008,7 +1036,7 @@ def create_label_studio_view_tool(project_id: int, data: Optional[Dict[str, Any]
     return _json(view)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_view_tool(
     view_id: int,
@@ -1026,7 +1054,7 @@ def update_label_studio_view_tool(
     return _json(view)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_view_tool(view_id: int) -> str:
     """Deletes a Data Manager view by ID.
@@ -1042,7 +1070,7 @@ def delete_label_studio_view_tool(view_id: int) -> str:
 # == Comments                                               ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_comments_tool(
     project_id: Optional[int] = None,
@@ -1058,7 +1086,7 @@ def list_label_studio_comments_tool(
     return _json(comments)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_comment_tool(comment_id: int) -> str:
     """Retrieves a single comment by ID.
@@ -1070,7 +1098,7 @@ def get_label_studio_comment_tool(comment_id: int) -> str:
     return _json(comment)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_comment_tool(
     annotation_id: int,
@@ -1088,7 +1116,7 @@ def create_label_studio_comment_tool(
     return _json(comment)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_comment_tool(
     comment_id: int,
@@ -1106,7 +1134,7 @@ def update_label_studio_comment_tool(
     return _json(comment)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_comment_tool(comment_id: int) -> str:
     """Deletes a comment by ID.
@@ -1122,7 +1150,7 @@ def delete_label_studio_comment_tool(comment_id: int) -> str:
 # == Webhooks                                               ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_webhooks_tool(project_id: Optional[int] = None) -> str:
     """Lists webhooks, optionally filtered by project.
@@ -1134,7 +1162,7 @@ def list_label_studio_webhooks_tool(project_id: Optional[int] = None) -> str:
     return _json(webhooks)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_webhook_tool(webhook_id: int) -> str:
     """Retrieves a single webhook by ID.
@@ -1146,7 +1174,7 @@ def get_label_studio_webhook_tool(webhook_id: int) -> str:
     return _json(webhook)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_webhook_tool(
     url: str,
@@ -1183,7 +1211,7 @@ def create_label_studio_webhook_tool(
     return _json(webhook)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_webhook_tool(
     webhook_id: int,
@@ -1217,7 +1245,7 @@ def update_label_studio_webhook_tool(
     return _json(webhook)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_webhook_tool(webhook_id: int) -> str:
     """Deletes a webhook by ID.
@@ -1229,7 +1257,7 @@ def delete_label_studio_webhook_tool(webhook_id: int) -> str:
     return json.dumps({"message": f"Webhook {webhook_id} deleted successfully.", "id": webhook_id})
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_webhook_actions_tool() -> str:
     """Returns the list of available webhook actions/events and their metadata."""
@@ -1240,7 +1268,7 @@ def get_label_studio_webhook_actions_tool() -> str:
 # == ML Backends                                            ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_ml_backends_tool(project_id: Optional[int] = None) -> str:
     """Lists connected ML backends, optionally filtered by project.
@@ -1252,7 +1280,7 @@ def list_label_studio_ml_backends_tool(project_id: Optional[int] = None) -> str:
     return _json(backends)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
     """Retrieves a single ML backend by ID.
@@ -1264,7 +1292,7 @@ def get_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
     return _json(backend)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def create_label_studio_ml_backend_tool(
     url: str,
@@ -1290,7 +1318,7 @@ def create_label_studio_ml_backend_tool(
     return _json(backend)
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def update_label_studio_ml_backend_tool(
     ml_backend_id: int,
@@ -1312,7 +1340,7 @@ def update_label_studio_ml_backend_tool(
     return _json(backend)
 
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def delete_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
     """Deletes (disconnects) an ML backend by ID.
@@ -1324,7 +1352,7 @@ def delete_label_studio_ml_backend_tool(ml_backend_id: int) -> str:
     return json.dumps({"message": f"ML backend {ml_backend_id} deleted successfully.", "id": ml_backend_id})
 
 
-@mcp.tool()
+@write_tool()
 @require_ls_connection
 def train_label_studio_ml_backend_tool(ml_backend_id: int, use_ground_truth: Optional[bool] = None) -> str:
     """Triggers a training run on an ML backend.
@@ -1341,7 +1369,7 @@ def train_label_studio_ml_backend_tool(ml_backend_id: int, use_ground_truth: Opt
 # == Data Manager Actions (bulk operations)                 ==
 # ============================================================
 
-@mcp.tool()
+@destructive_tool()
 @require_ls_connection
 def run_label_studio_action_tool(
     action_id: str,
@@ -1383,7 +1411,7 @@ def run_label_studio_action_tool(
 # == Exports                                                ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def export_label_studio_project_tasks_tool(project_id: int) -> str:
     """Exports a project's tasks and annotations as JSON.
@@ -1397,7 +1425,7 @@ def export_label_studio_project_tasks_tool(project_id: int) -> str:
     return _json(exported)
 
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def list_label_studio_export_formats_tool(project_id: int) -> str:
     """Lists the export formats available for a project.
@@ -1412,7 +1440,7 @@ def list_label_studio_export_formats_tool(project_id: int) -> str:
 # == Instance / version info                                ==
 # ============================================================
 
-@mcp.tool()
+@read_tool()
 @require_ls_connection
 def get_label_studio_version_tool() -> str:
     """Returns version and build information for the Label Studio instance."""
