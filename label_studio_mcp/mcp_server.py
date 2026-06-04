@@ -1769,3 +1769,311 @@ def list_label_studio_export_formats_tool(project_id: int) -> str:
 def get_label_studio_version_tool() -> str:
     """Returns version and build information for the Label Studio instance."""
     return _json(ls.versions.get())
+
+
+# ============================================================
+# == Labeling config generation                             ==
+# ============================================================
+# Building a valid labeling-config XML by hand is the most error-prone step for
+# users. This generates (and locally validates) the XML from a high-level spec so
+# the LLM can hand the result straight to the create/update project tools.
+
+from xml.sax.saxutils import escape as _xml_escape
+
+# data (object) tag + default task-data field for each supported input type
+_OBJECT_TAGS = {
+    "text": ("Text", "text"),
+    "hypertext": ("HyperText", "html"),
+    "image": ("Image", "image"),
+    "audio": ("Audio", "audio"),
+}
+
+# labeling control tag for each supported control type
+_CONTROL_TAGS = {
+    "choices": "Choices",
+    "labels": "Labels",
+    "rectanglelabels": "RectangleLabels",
+    "rating": "Rating",
+    "textarea": "TextArea",
+}
+
+# controls that do not take a list of <Label>/<Choice> children
+_LABELLESS_CONTROLS = {"rating", "textarea"}
+
+
+def _build_label_config(
+    data_type: str,
+    control_type: str,
+    labels=None,
+    field_name: Optional[str] = None,
+    from_name: Optional[str] = None,
+    choice: str = "single",
+) -> str:
+    """Build a labeling-config XML string from a high-level spec (no API calls)."""
+    data_type = (data_type or "").strip().lower()
+    control_type = (control_type or "").strip().lower()
+    if data_type not in _OBJECT_TAGS:
+        raise ValueError(
+            f"Unsupported data_type {data_type!r}. Supported: {sorted(_OBJECT_TAGS)}."
+        )
+    if control_type not in _CONTROL_TAGS:
+        raise ValueError(
+            f"Unsupported control_type {control_type!r}. Supported: {sorted(_CONTROL_TAGS)}."
+        )
+    if control_type == "rectanglelabels" and data_type != "image":
+        raise ValueError("control_type 'rectanglelabels' requires data_type 'image'.")
+    if control_type == "labels" and data_type not in ("text", "hypertext"):
+        raise ValueError(
+            "control_type 'labels' (text spans) requires data_type 'text' or 'hypertext'."
+        )
+    labels = [str(label) for label in (labels or []) if str(label).strip()]
+    if control_type not in _LABELLESS_CONTROLS and not labels:
+        raise ValueError(
+            f"control_type {control_type!r} requires a non-empty 'labels' list."
+        )
+
+    obj_tag, default_field = _OBJECT_TAGS[data_type]
+    field = (field_name or default_field).strip()
+    obj_name = field
+    ctrl_tag = _CONTROL_TAGS[control_type]
+    ctrl_name = (from_name or control_type).strip()
+
+    obj_line = f'  <{obj_tag} name="{_xml_escape(obj_name)}" value="${_xml_escape(field)}"/>'
+
+    attrs = f'name="{_xml_escape(ctrl_name)}" toName="{_xml_escape(obj_name)}"'
+    if control_type == "choices":
+        ch = "multiple" if str(choice).strip().lower() in ("multiple", "multi") else "single"
+        attrs += f' choice="{ch}"'
+    if control_type in _LABELLESS_CONTROLS:
+        ctrl_block = f'  <{ctrl_tag} {attrs}/>'
+    else:
+        child = "Choice" if control_type == "choices" else "Label"
+        items = "\n".join(
+            f'    <{child} value="{_xml_escape(label)}"/>' for label in labels
+        )
+        ctrl_block = f'  <{ctrl_tag} {attrs}>\n{items}\n  </{ctrl_tag}>'
+
+    return f"<View>\n{obj_line}\n{ctrl_block}\n</View>"
+
+
+@read_tool()
+def generate_label_studio_label_config_tool(
+    data_type: str,
+    control_type: str,
+    labels: Optional[List[str]] = None,
+    field_name: Optional[str] = None,
+    from_name: Optional[str] = None,
+    choice: str = "single",
+) -> str:
+    """Generate a valid Label Studio XML labeling configuration from a high-level spec.
+
+    Does NOT call Label Studio — it builds and locally validates the XML so you can
+    pass the result to create_label_studio_project_tool or the update-config tools.
+
+    Args:
+        data_type (str): Input media type — one of: text, hypertext, image, audio. REQUIRED.
+        control_type (str): Labeling control — one of: choices, labels, rectanglelabels,
+            rating, textarea. ('labels' = text spans/NER; 'rectanglelabels' = image boxes.) REQUIRED.
+        labels (List[str] | None): Label/choice values, e.g. ["Positive", "Negative"].
+            Required for choices/labels/rectanglelabels; ignored for rating/textarea.
+        field_name (str | None): Task-data key for the input (default: text/html/image/audio
+            depending on data_type).
+        from_name (str | None): Name of the control tag (default: the control_type).
+        choice (str): For control_type 'choices' — 'single' or 'multiple' (default 'single').
+    """
+    try:
+        config = _build_label_config(
+            data_type, control_type, labels, field_name, from_name, choice
+        )
+    except ValueError as exc:
+        return json.dumps({"error": True, "type": "ValueError", "message": str(exc)})
+
+    result = {"label_config": config, "validated": True}
+    try:
+        LabelInterface(config)
+    except Exception as exc:  # generated XML should parse; report if it somehow doesn't
+        result["validated"] = False
+        result["validation_error"] = str(exc)[:300]
+    return json.dumps(result)
+
+
+# ============================================================
+# == Project analytics / progress                           ==
+# ============================================================
+
+@read_tool()
+@require_ls_connection
+def get_label_studio_project_statistics_tool(project_id: int) -> str:
+    """Return progress statistics for a project (counts + completion percentage).
+
+    Reads the project's summary fields in a single API call: total tasks, tasks with
+    annotations, total annotations/predictions, useful/ground-truth/skipped/finished
+    counts, and a derived completion percentage.
+
+    Args:
+        project_id (int): ID of the project. REQUIRED.
+    """
+    project = ls.projects.get(id=project_id)
+
+    def field(name):
+        return getattr(project, name, None)
+
+    total = field("task_number") or 0
+    with_annotations = field("num_tasks_with_annotations") or 0
+    stats = {
+        "project_id": project_id,
+        "title": getattr(project, "title", None),
+        "task_number": total,
+        "num_tasks_with_annotations": with_annotations,
+        "total_annotations_number": field("total_annotations_number"),
+        "total_predictions_number": field("total_predictions_number"),
+        "useful_annotation_number": field("useful_annotation_number"),
+        "ground_truth_number": field("ground_truth_number"),
+        "skipped_annotations_number": field("skipped_annotations_number"),
+        "finished_task_number": field("finished_task_number"),
+        "completion_percentage": round(with_annotations / total * 100, 2) if total else 0.0,
+    }
+    return json.dumps(stats)
+
+
+@read_tool()
+@require_ls_connection
+def get_label_studio_annotator_statistics_tool(project_id: int, max_tasks: int = 200) -> str:
+    """Best-effort per-annotator breakdown of completed annotations for a project.
+
+    Samples up to `max_tasks` tasks and tallies, per annotator (user id), how many
+    annotations they completed and how many are marked ground truth. For large
+    projects this is a sample, not the full total — raise `max_tasks` to widen it.
+    Inter-annotator agreement requires the Label Studio Enterprise stats API and is
+    not computed here.
+
+    Args:
+        project_id (int): ID of the project. REQUIRED.
+        max_tasks (int): Maximum number of tasks to sample (default 200).
+    """
+    per_annotator: Dict[str, Dict[str, int]] = {}
+    tasks_sampled = 0
+    annotations_counted = 0
+
+    for task in ls.tasks.list(project=project_id):
+        if tasks_sampled >= max_tasks:
+            break
+        tasks_sampled += 1
+        annotations = getattr(task, "annotations", None)
+        if not annotations:
+            fetched = _fetch_task(getattr(task, "id", None))
+            annotations = getattr(fetched, "annotations", None) if fetched is not None else None
+        if not isinstance(annotations, list):
+            continue
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                annotation = _serialize(annotation)
+            if not isinstance(annotation, dict):
+                continue
+            user = annotation.get("completed_by")
+            if isinstance(user, dict):
+                user = user.get("id", user.get("email"))
+            key = str(user) if user is not None else "unknown"
+            record = per_annotator.setdefault(key, {"annotations": 0, "ground_truth": 0})
+            record["annotations"] += 1
+            if annotation.get("ground_truth"):
+                record["ground_truth"] += 1
+            annotations_counted += 1
+
+    return json.dumps({
+        "project_id": project_id,
+        "tasks_sampled": tasks_sampled,
+        "annotations_counted": annotations_counted,
+        "max_tasks": max_tasks,
+        "per_annotator": per_annotator,
+        "note": (
+            "Sampled up to max_tasks; counts may be partial for large projects. "
+            "Agreement metrics require Label Studio Enterprise."
+        ),
+    })
+
+
+# ============================================================
+# == MCP Resources (browsable read-only context)           ==
+# ============================================================
+# Expose read-only Label Studio data as MCP resources so clients can attach it as
+# context (e.g. @-mention a project's config) without an explicit tool call.
+
+@mcp.resource("labelstudio://projects")
+@require_ls_connection
+def projects_resource() -> str:
+    """All Label Studio projects (id, title, task_count) as a JSON list."""
+    projects = []
+    for index, project in enumerate(ls.projects.list()):
+        if index >= 100:
+            break
+        projects.append({
+            "id": project.id,
+            "title": getattr(project, "title", "N/A"),
+            "task_count": getattr(project, "task_number", 0),
+        })
+    return json.dumps(projects)
+
+
+@mcp.resource("labelstudio://project/{project_id}/config")
+@require_ls_connection
+def project_config_resource(project_id: str) -> str:
+    """The XML labeling configuration for a single project."""
+    return ls.projects.get(id=int(project_id)).label_config
+
+
+@mcp.resource("labelstudio://project/{project_id}/summary")
+@require_ls_connection
+def project_summary_resource(project_id: str) -> str:
+    """Progress statistics for a single project as JSON."""
+    return get_label_studio_project_statistics_tool(int(project_id))
+
+
+# ============================================================
+# == MCP Prompts (guided workflows)                         ==
+# ============================================================
+
+@mcp.prompt()
+def setup_labeling_project(description: str) -> str:
+    """Guided workflow: create a Label Studio project for a described task."""
+    return (
+        "You are setting up a Label Studio project.\n\n"
+        f"Task description from the user:\n{description}\n\n"
+        "Steps:\n"
+        "1. Choose the data type (text/hypertext/image/audio) and control "
+        "(choices/labels/rectanglelabels/rating/textarea) that fit the task.\n"
+        "2. Call generate_label_studio_label_config_tool to build a valid XML config.\n"
+        "3. Review the XML with the user, then call create_label_studio_project_tool "
+        "with a clear title and that label_config.\n"
+        "4. Report the new project id and its data-manager URL."
+    )
+
+
+@mcp.prompt()
+def assess_annotation_quality(project_id: str) -> str:
+    """Guided workflow: review annotation progress and quality for a project."""
+    return (
+        f"Assess annotation progress and quality for Label Studio project {project_id}.\n\n"
+        "Steps:\n"
+        "1. Call get_label_studio_project_statistics_tool for totals and completion %.\n"
+        "2. Call get_label_studio_annotator_statistics_tool for the per-annotator breakdown.\n"
+        "3. Summarise progress, workload balance across annotators and ground-truth "
+        "coverage, and flag annotators/tasks that look like outliers.\n"
+        "4. Recommend next actions (add reviewers, rebalance workload, set ground truth)."
+    )
+
+
+@mcp.prompt()
+def generate_predictions_plan(project_id: str) -> str:
+    """Guided workflow: plan adding model predictions to a project's tasks."""
+    return (
+        f"Plan generating model predictions for Label Studio project {project_id}.\n\n"
+        "Steps:\n"
+        "1. Call get_label_studio_project_config_tool to learn the labeling schema "
+        "(control names, labels, the data field).\n"
+        "2. Call list_label_studio_project_tasks_tool to find tasks that need predictions.\n"
+        "3. For each task, build a prediction 'result' matching the schema (for text "
+        "spans include the exact text and character offsets), then call "
+        "create_label_studio_prediction_tool.\n"
+        "4. Report how many predictions were created and any tasks skipped."
+    )

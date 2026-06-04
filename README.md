@@ -37,8 +37,15 @@ The server exposes the full Label Studio REST API surface as MCP tools:
 *   **Comments**: Create, read, update, delete, and list annotation comments.
 *   **Webhooks**: Create, read, update, delete, and list webhooks and inspect available webhook actions.
 *   **ML Backends**: Connect, read, update, delete, list, and trigger training on ML backends.
+*   **Config Generation**: Build and locally validate a labeling-config XML from a high-level spec (data type + control + labels) — no need to hand-write XML.
+*   **Analytics**: Project progress statistics (totals, completion %, ground-truth/skipped counts) and a best-effort per-annotator breakdown.
 *   **Instance Info**: Retrieve Label Studio version/build information.
 *   **SDK Integration**: Leverages the official `label-studio-sdk` for communication.
+
+In addition to tools, the server exposes:
+
+*   **Resources** (browsable read-only context): `labelstudio://projects`, `labelstudio://project/{id}/config`, `labelstudio://project/{id}/summary`.
+*   **Prompts** (guided workflows): `setup_labeling_project`, `assess_annotation_quality`, `generate_predictions_plan`.
 
 ## Prerequisites
 
