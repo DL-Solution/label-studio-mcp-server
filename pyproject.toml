@@ -3,6 +3,7 @@ name = "label-studio-mcp"
 version = "0.1.0"
 description = "A Model Context Protocol (MCP) server for Label Studio"
 authors = [
+    { name = "DL-Solution" },
     { name = "HumanSignal", email = "support@humansignal.com" },
 ]
 readme = "README.md"
@@ -26,7 +27,8 @@ dependencies = [
 mcp-label-studio = "label_studio_mcp.main:main"
 
 [project.urls]
-Home = "https://github.com/HumanSignal/label-studio-mcp-server"
+Home = "https://github.com/DL-Solution/label-studio-mcp-server"
+Upstream = "https://github.com/HumanSignal/label-studio-mcp-server"
 
 [tool.setuptools]
 packages = ["label_studio_mcp"]

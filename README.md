@@ -1,5 +1,12 @@
 # Label Studio MCP Server
 
+> **Fork notice:** This is a fork of the original
+> [HumanSignal/label-studio-mcp-server](https://github.com/HumanSignal/label-studio-mcp-server),
+> maintained by **DL-Solution**. It extends the upstream project with full Label
+> Studio REST API coverage, an HTTP transport, `.mcpb` desktop-bundle packaging,
+> and internal-CA / TLS support. Licensed under Apache-2.0; original copyright is
+> retained in [`LICENSE`](./LICENSE).
+
 ## Overview
 
 This project provides a Model Context Protocol (MCP) server that allows interaction with a [Label Studio](https://labelstud.io/) instance using the `label-studio-sdk`. It enables programmatic management of labeling projects, tasks, and predictions via natural language or structured calls from MCP clients. Using this MCP Server, you can make requests like: 
