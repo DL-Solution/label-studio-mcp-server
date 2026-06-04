@@ -85,6 +85,13 @@ mcpb validate manifest.json     # optional sanity check
 mcpb pack . dist/label-studio.mcpb
 ```
 
+> **Releasing:** the workflow checks that the pushed tag (`vX.Y.Z`) matches the
+> `version` in `manifest.json`, so bump the manifest before tagging. To publish a
+> **code-signed** bundle, add the repository secrets `MCPB_CERT_PEM` and
+> `MCPB_KEY_PEM` (a PEM certificate that chains to a trusted root and its private
+> key); the workflow then signs and verifies the bundle automatically. Without
+> those secrets an unsigned — but fully functional — bundle is produced.
+
 **Install it:**
 
 1. Open **Claude Desktop → Settings → Extensions**.

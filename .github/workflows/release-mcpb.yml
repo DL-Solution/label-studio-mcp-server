@@ -2,6 +2,11 @@ name: Build and publish MCPB bundle
 
 # Builds the .mcpb (MCP Bundle) and attaches it to the GitHub Release whenever a
 # version tag is pushed (e.g. v0.1.0). Can also be triggered manually.
+#
+# Optional code signing: if the repository defines the secrets MCPB_CERT_PEM and
+# MCPB_KEY_PEM (PEM-encoded certificate and private key), the bundle is signed and
+# verified before release. Without them, an unsigned (but fully functional) bundle
+# is produced.
 on:
   push:
     tags:
@@ -14,6 +19,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      MCPB_CERT_PEM: ${{ secrets.MCPB_CERT_PEM }}
+      MCPB_KEY_PEM: ${{ secrets.MCPB_KEY_PEM }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,8 +37,31 @@ jobs:
       - name: Validate manifest
         run: mcpb validate manifest.json
 
+      - name: Check tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest_version="$(node -p "require('./manifest.json').version")"
+          if [ "$tag" != "$manifest_version" ]; then
+            echo "::error::Tag v$tag does not match manifest.json version $manifest_version"
+            exit 1
+          fi
+          echo "Tag matches manifest version: $manifest_version"
+
       - name: Pack bundle
         run: mcpb pack . "dist/label-studio-mcp.mcpb"
+
+      - name: Sign bundle (optional)
+        if: ${{ env.MCPB_CERT_PEM != '' && env.MCPB_KEY_PEM != '' }}
+        run: |
+          printf '%s' "$MCPB_CERT_PEM" > cert.pem
+          printf '%s' "$MCPB_KEY_PEM" > key.pem
+          mcpb sign "dist/label-studio-mcp.mcpb" --cert cert.pem --key key.pem
+          rm -f cert.pem key.pem
+          # 'verify' only succeeds for certificates chaining to a trusted root;
+          # keep it informational so self-signed certs don't fail the release.
+          mcpb verify "dist/label-studio-mcp.mcpb" \
+            || echo "::warning::Bundle is signed but the certificate did not verify against a trusted root (expected for self-signed certificates)."
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
