@@ -16,8 +16,8 @@ LABEL_STUDIO_URL = os.getenv("LABEL_STUDIO_URL", "http://localhost:8080")
 LABEL_STUDIO_API_KEY = os.getenv("LABEL_STUDIO_API_KEY")
 
 # Optional TLS configuration. Useful when Label Studio is served over HTTPS with a
-# certificate issued by an internal/corporate CA (e.g. an Active Directory CA such
-# as internal.example) that isn't in the default trust store.
+# certificate issued by an internal/corporate CA (e.g. an Active Directory CA)
+# that isn't in the default trust store.
 #   LABEL_STUDIO_CA_BUNDLE  - path to a PEM file containing the internal CA (chain)
 #                             to trust for the Label Studio HTTPS certificate.
 #   LABEL_STUDIO_VERIFY_SSL - set to "false" to disable certificate verification
