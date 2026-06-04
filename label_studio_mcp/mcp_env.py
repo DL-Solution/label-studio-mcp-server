@@ -1,6 +1,16 @@
 import os
+import sys
 import httpx
 from label_studio_sdk.client import LabelStudio
+
+
+def _log(message: str) -> None:
+    """Emit diagnostics to stderr.
+
+    For the stdio transport, stdout is the JSON-RPC channel, so any logging must
+    go to stderr to avoid corrupting the protocol stream.
+    """
+    print(message, file=sys.stderr)
 
 LABEL_STUDIO_URL = os.getenv("LABEL_STUDIO_URL", "http://localhost:8080")
 LABEL_STUDIO_API_KEY = os.getenv("LABEL_STUDIO_API_KEY")
@@ -47,8 +57,8 @@ if LABEL_STUDIO_API_KEY:
             tls_note = f" (trusting CA bundle: {LABEL_STUDIO_CA_BUNDLE})"
         else:
             tls_note = ""
-        print(f"Connected to Label Studio at {LABEL_STUDIO_URL}{tls_note}")
+        _log(f"Connected to Label Studio at {LABEL_STUDIO_URL}{tls_note}")
     except Exception as e:
-        print(f"Error initializing Label Studio client: {e}")
+        _log(f"Error initializing Label Studio client: {e}")
 else:
-    print("LABEL_STUDIO_API_KEY not set; Label Studio client unavailable.")
+    _log("LABEL_STUDIO_API_KEY not set; Label Studio client unavailable.")
