@@ -1,6 +1,6 @@
 [project]
 name = "label-studio-mcp"
-version = "1.1.0"
+version = "1.1.1"
 description = "A Model Context Protocol (MCP) server for Label Studio"
 authors = [
     { name = "DL-Solution" },
@@ -12,7 +12,11 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3"
 ]
-requires-python = ">=3.10"
+# Upper bound: a transitive dependency (Pillow, via label-studio-sdk) only ships
+# prebuilt wheels for CPython <= 3.13. Without this cap, `uv` may select Python
+# 3.14+ on a user's machine and fall back to building Pillow from source, which
+# fails without a C toolchain (see the desktop-bundle install error reports).
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "httpx>=0.28.1",
     "label-studio-sdk>=1.0.11",
