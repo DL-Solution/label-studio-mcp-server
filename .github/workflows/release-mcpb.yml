@@ -51,29 +51,42 @@ jobs:
           fi
           echo "Tag matches manifest version: $manifest_version"
 
+      - name: Determine bundle name
+        run: |
+          # Version the asset so multiple releases are distinguishable. On a tag
+          # build use the tag (already checked to match the manifest); otherwise
+          # (manual run) fall back to the manifest version.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(node -p "require('./manifest.json').version")"
+          fi
+          echo "BUNDLE=dist/label-studio-mcp-${version}.mcpb" >> "$GITHUB_ENV"
+          echo "Bundle: label-studio-mcp-${version}.mcpb"
+
       - name: Pack bundle
-        run: mcpb pack . "dist/label-studio-mcp.mcpb"
+        run: mcpb pack . "$BUNDLE"
 
       - name: Sign bundle (optional)
         if: ${{ env.MCPB_CERT_PEM != '' && env.MCPB_KEY_PEM != '' }}
         run: |
           printf '%s' "$MCPB_CERT_PEM" > cert.pem
           printf '%s' "$MCPB_KEY_PEM" > key.pem
-          mcpb sign "dist/label-studio-mcp.mcpb" --cert cert.pem --key key.pem
+          mcpb sign "$BUNDLE" --cert cert.pem --key key.pem
           rm -f cert.pem key.pem
           # 'verify' only succeeds for certificates chaining to a trusted root;
           # keep it informational so self-signed certs don't fail the release.
-          mcpb verify "dist/label-studio-mcp.mcpb" \
+          mcpb verify "$BUNDLE" \
             || echo "::warning::Bundle is signed but the certificate did not verify against a trusted root (expected for self-signed certificates)."
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: label-studio-mcp-mcpb
-          path: dist/label-studio-mcp.mcpb
+          path: ${{ env.BUNDLE }}
 
       - name: Attach bundle to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/label-studio-mcp.mcpb
+          files: ${{ env.BUNDLE }}
