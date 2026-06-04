@@ -1,0 +1,9 @@
+# Files excluded from the packed .mcpb bundle
+.git/
+.github/
+.venv/
+**/__pycache__/
+**/*.pyc
+.python-version
+dist/
+*.mcpb
