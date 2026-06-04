@@ -2,6 +2,7 @@
 .git/
 .github/
 scripts/
+docs/
 .venv/
 **/__pycache__/
 **/*.pyc
