@@ -488,19 +488,34 @@ def create_label_studio_prediction_tool(
 
     Args:
         task_id (int): The ID of the task to add the prediction to.
-        result (List[Dict[str, Any]]): The prediction result list, containing dictionaries 
+        result (List[Dict[str, Any]]): The prediction result list, containing dictionaries
                                     matching the Label Studio prediction format.
-                                    Example: [{"from_name": "label", "to_name": "text", 
+                                    Example: [{"from_name": "label", "to_name": "text",
                                              "type": "choices", "value": {"choices": ["Positive"]}}]
         model_version (str, optional): String identifying the model version.
         score (float, optional): Confidence score for the prediction (0.0 to 1.0).
 
+    Text spans (type "labels"/"hypertextlabels"): start/end in value are CHARACTER
+    indices (0-based, end-exclusive), NOT bytes — count by characters for
+    Cyrillic/UTF-8. ALWAYS include "text" in value equal to the exact substring
+    data[<to_name>][start:end]. Label Studio does NOT validate start/end against
+    the supplied text — a mismatch is accepted silently and renders a shifted span.
+    Compute offsets programmatically (str.find + len), never by hand, and ensure
+    text[start:end] == value["text"]. This tool additionally verifies offsets
+    against the task text and rejects mismatches.
+    Correct span:
+        {"from_name": "label", "to_name": "text", "type": "labels",
+         "value": {"start": 15, "end": 27, "text": "Winston Blue", "labels": ["PRODUCT"]}}
+
     Returns:
         JSON string containing the details of the created prediction.
-        
+
     Reference: Uses ls.predictions.create based on API endpoint /api/predictions/
                https://api.labelstud.io/api-reference/api-reference/predictions/create
     """
+    # Verify text-span offsets against the real task text before sending.
+    _validate_spans(result, _fetch_task_data(task_id))
+
     # Prepare arguments for the SDK call, filtering out None values
     sdk_kwargs = {
         "task": task_id,  # Use 'task' instead of 'task_id' for the SDK
@@ -543,6 +558,81 @@ def create_label_studio_prediction_tool(
 # uses its own defaults instead of sending explicit nulls.
 def _clean(**kwargs):
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+# --- Span (NER) offset validation -----------------------------------------
+# Label Studio does NOT validate text-span start/end against the task text: a
+# mismatch is accepted silently and renders a shifted label in the UI. These
+# helpers verify offsets against the real task text before sending.
+
+def _resolve_task_text(task_data, to_name):
+    """Return the text field a span targets, falling back to the first string field."""
+    if not isinstance(task_data, dict):
+        return None
+    value = task_data.get(to_name)
+    if isinstance(value, str):
+        return value
+    for value in task_data.values():
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _validate_spans(result, task_data) -> None:
+    """Validate text-span results before sending them to Label Studio.
+
+    For type="labels"/"hypertextlabels" spans with integer character offsets:
+      - the "text" field is REQUIRED (the guardrail against silently shifted spans);
+      - when the task text is known, offsets must be in range and
+        text[start:end] must equal value["text"].
+
+    Spans without integer offsets (e.g. hypertext xpath ranges) are skipped.
+    `task_data` may be None (e.g. text could not be fetched): the "text"-required
+    and ordering checks still run; the substring match is skipped.
+    """
+    if not isinstance(result, list):
+        return
+    for r in result:
+        if not isinstance(r, dict) or r.get("type") not in ("labels", "hypertextlabels"):
+            continue
+        v = r.get("value")
+        if not isinstance(v, dict) or "start" not in v or "end" not in v:
+            continue
+        s, e = v["start"], v["end"]
+        if not (isinstance(s, int) and isinstance(e, int)):
+            continue  # non-character offsets (e.g. hypertext xpath) — can't check here
+        if not (0 <= s < e):
+            raise ValueError(f"invalid span offsets: start={s} end={e} (need 0 <= start < end)")
+        if "text" not in v or v.get("text") is None:
+            raise ValueError(
+                f"span at start={s} end={e} is missing the required 'text' field; "
+                "include the exact substring data[to_name][start:end] so offsets can be verified"
+            )
+        declared = v["text"]
+        task_text = _resolve_task_text(task_data, r.get("to_name"))
+        if task_text is None:
+            continue  # offsets present and text declared, but task text unavailable to cross-check
+        if e > len(task_text):
+            raise ValueError(
+                f"span out of range: start={s} end={e} text_len={len(task_text)}"
+            )
+        actual = task_text[s:e]
+        if declared != actual:
+            raise ValueError(
+                f"span mismatch: declared text={declared!r} but text[{s}:{e}]={actual!r}"
+            )
+
+
+def _fetch_task_data(task_id):
+    """Best-effort fetch of a task's data dict; returns None if unavailable."""
+    if task_id is None:
+        return None
+    try:
+        task = ls.tasks.get(id=str(task_id))
+    except Exception:
+        return None
+    data = getattr(task, "data", None)
+    return data if isinstance(data, dict) else None
 
 
 # ============================================================
@@ -731,7 +821,20 @@ def create_label_studio_annotation_tool(
         ground_truth (bool): Optionally mark the annotation as ground truth.
         was_cancelled (bool): Optionally mark the annotation as skipped/cancelled.
         lead_time (float): Optional time spent (seconds) producing the annotation.
+
+    Text spans (type "labels"/"hypertextlabels"): start/end in value are CHARACTER
+    indices (0-based, end-exclusive), NOT bytes — count by characters for
+    Cyrillic/UTF-8. ALWAYS include "text" in value equal to the exact substring
+    data[<to_name>][start:end]. Label Studio does NOT validate start/end against
+    the supplied text — a mismatch is accepted silently and renders a shifted span.
+    Compute offsets programmatically (str.find + len), never by hand, and ensure
+    text[start:end] == value["text"]. This tool additionally verifies offsets
+    against the task text and rejects mismatches.
+    Correct span:
+        {"from_name": "label", "to_name": "text", "type": "labels",
+         "value": {"start": 15, "end": 27, "text": "Winston Blue", "labels": ["PRODUCT"]}}
     """
+    _validate_spans(result, _fetch_task_data(task_id))
     annotation = ls.annotations.create(
         id=task_id,
         result=result,
@@ -762,7 +865,26 @@ def update_label_studio_annotation_tool(
         ground_truth (bool): Optionally toggle ground-truth flag.
         was_cancelled (bool): Optionally toggle the skipped/cancelled flag.
         lead_time (float): Optional time spent (seconds) producing the annotation.
+
+    Text spans (type "labels"/"hypertextlabels"): start/end in value are CHARACTER
+    indices (0-based, end-exclusive), NOT bytes — count by characters for
+    Cyrillic/UTF-8. ALWAYS include "text" in value equal to the exact substring
+    data[<to_name>][start:end]. Label Studio does NOT validate start/end against
+    the supplied text — a mismatch is accepted silently and renders a shifted span.
+    Compute offsets programmatically (str.find + len), never by hand, and ensure
+    text[start:end] == value["text"]. This tool additionally verifies offsets
+    against the task text and rejects mismatches.
+    Correct span:
+        {"from_name": "label", "to_name": "text", "type": "labels",
+         "value": {"start": 15, "end": 27, "text": "Winston Blue", "labels": ["PRODUCT"]}}
     """
+    if result is not None:
+        task_id = None
+        try:
+            task_id = getattr(ls.annotations.get(id=annotation_id), "task", None)
+        except Exception:
+            task_id = None
+        _validate_spans(result, _fetch_task_data(task_id))
     annotation = ls.annotations.update(
         id=annotation_id,
         **_clean(
@@ -836,7 +958,27 @@ def update_label_studio_prediction_tool(
         task_id (int): Optionally reassign the prediction to a different task.
         model_version (str): Optional model version identifier.
         score (float): Optional confidence score (0.0 - 1.0).
+
+    Text spans (type "labels"/"hypertextlabels"): start/end in value are CHARACTER
+    indices (0-based, end-exclusive), NOT bytes — count by characters for
+    Cyrillic/UTF-8. ALWAYS include "text" in value equal to the exact substring
+    data[<to_name>][start:end]. Label Studio does NOT validate start/end against
+    the supplied text — a mismatch is accepted silently and renders a shifted span.
+    Compute offsets programmatically (str.find + len), never by hand, and ensure
+    text[start:end] == value["text"]. This tool additionally verifies offsets
+    against the task text and rejects mismatches.
+    Correct span:
+        {"from_name": "label", "to_name": "text", "type": "labels",
+         "value": {"start": 15, "end": 27, "text": "Winston Blue", "labels": ["PRODUCT"]}}
     """
+    if result is not None:
+        resolved_task_id = task_id
+        if resolved_task_id is None:
+            try:
+                resolved_task_id = getattr(ls.predictions.get(id=prediction_id), "task", None)
+            except Exception:
+                resolved_task_id = None
+        _validate_spans(result, _fetch_task_data(resolved_task_id))
     prediction = ls.predictions.update(
         id=prediction_id,
         **_clean(result=result, task=task_id, model_version=model_version, score=score),
