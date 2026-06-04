@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "label-studio-mcp",
   "display_name": "Label Studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Interact with a Label Studio instance: manage projects, tasks, annotations, predictions, users, workspaces, webhooks and ML backends.",
   "long_description": "A Model Context Protocol server for [Label Studio](https://labelstud.io/). It exposes the full Label Studio REST API as tools so you can create and configure projects, import and label tasks, manage annotations and predictions, run Data Manager bulk actions, and administer users, workspaces, webhooks and ML backends — all from your MCP client.\n\nThis is a fork of the original [HumanSignal/label-studio-mcp-server](https://github.com/HumanSignal/label-studio-mcp-server), extended and maintained by DL-Solution with full REST API coverage, HTTP transport, desktop-bundle packaging and internal-CA / TLS support.",
   "author": {
