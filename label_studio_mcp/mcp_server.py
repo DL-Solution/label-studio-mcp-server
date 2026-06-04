@@ -3,6 +3,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 import os
+import re
 import json
 from label_studio_sdk.client import LabelStudio
 import argparse
@@ -44,6 +45,42 @@ def destructive_tool(**kwargs):
     )
 
 # Helper to handle potential lack of LS connection
+def _summarize_error_body(body) -> str:
+    """Reduce an API error body to a short, single-line string.
+
+    Server errors sometimes return a full HTML error page; returning that verbatim
+    floods the client context. Strip markup and collapse whitespace, then truncate.
+    """
+    if body is None:
+        return ""
+    if isinstance(body, (dict, list)):
+        text = json.dumps(body, default=str)
+    else:
+        text = str(body)
+        if "<html" in text.lower() or "<!doctype" in text.lower():
+            # Drop HTML tags so we keep only the human-readable message.
+            text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:300] + ("…" if len(text) > 300 else "")
+
+
+def _format_tool_error(func_name: str, exc: Exception) -> str:
+    """Render an exception as a compact JSON error string for MCP clients."""
+    error = {"error": True, "tool": func_name, "type": type(exc).__name__}
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        error["status_code"] = status_code
+        error["message"] = _summarize_error_body(getattr(exc, "body", None)) or str(exc)
+        if status_code == 404:
+            error["hint"] = (
+                "Endpoint returned 404. The resource may not exist, or this API "
+                "may not be available on your Label Studio edition/version."
+            )
+    else:
+        error["message"] = str(exc)[:500]
+    return json.dumps(error)
+
+
 def require_ls_connection(func):
     # Preserve original signature using functools.wraps
     @functools.wraps(func)
@@ -57,12 +94,8 @@ def require_ls_connection(func):
             # Execute the wrapped function (tool or resource handler)
             return func(*args, **kwargs)
         except Exception as e:
-            # Return a more informative error message for debugging
-            import traceback
-            error_type = type(e).__name__
-            error_details = str(e)
-            # traceback_str = traceback.format_exc() # Optional: include full traceback
-            return f"Error in function '{func.__name__}': [{error_type}] {error_details}"
+            # Return a compact, JSON-serializable error (never a full HTML page).
+            return _format_tool_error(func.__name__, e)
     return wrapper
 
 # --- JSON Serializer for Datetime Objects ---
@@ -1103,6 +1136,7 @@ def get_label_studio_comment_tool(comment_id: int) -> str:
 def create_label_studio_comment_tool(
     annotation_id: int,
     text: str,
+    project_id: Optional[int] = None,
     is_resolved: Optional[bool] = None,
 ) -> str:
     """Creates a comment on an annotation.
@@ -1110,9 +1144,19 @@ def create_label_studio_comment_tool(
     Args:
         annotation_id (int): ID of the annotation to comment on. REQUIRED.
         text (str): The comment text. REQUIRED.
+        project_id (int): Optional project ID. Some Label Studio configurations
+            require the project to be supplied alongside the annotation.
         is_resolved (bool): Optionally mark the comment as resolved.
+
+    Note: the comments API is not available on every Label Studio edition/version.
+    A 404 response usually means commenting isn't enabled on your instance rather
+    than a problem with the annotation ID.
     """
-    comment = ls.comments.create(annotation=annotation_id, text=text, **_clean(is_resolved=is_resolved))
+    comment = ls.comments.create(
+        annotation=annotation_id,
+        text=text,
+        **_clean(project=project_id, is_resolved=is_resolved),
+    )
     return _json(comment)
 
 
@@ -1399,12 +1443,50 @@ def run_label_studio_action_tool(
         kwargs["selected_items"] = {"all": False, "included": selected_task_ids}
     elif all_tasks:
         kwargs["selected_items"] = {"all": True, "excluded": []}
-    ls.actions.create(**kwargs)
-    return json.dumps({
+    response = {
         "message": f"Action '{action_id}' executed on project {project_id}.",
         "action_id": action_id,
         "project_id": project_id,
-    })
+    }
+
+    # The SDK's actions.create discards the response body, but Label Studio often
+    # returns a count of affected items (e.g. {"processed_items": N}). Issue the
+    # request through the SDK's already-configured HTTP client so we can surface
+    # those metrics. The action is executed exactly once: we only fall back to the
+    # plain SDK call when the SDK internals are unavailable (i.e. before any request
+    # is sent), never after a request that may have already mutated data.
+    http_client = getattr(getattr(ls, "_client_wrapper", None), "httpx_client", None)
+    if http_client is None:
+        ls.actions.create(**kwargs)
+        return json.dumps(response)
+
+    raw = http_client.request(
+        "api/dm/actions/",
+        method="POST",
+        params={"id": action_id, "project": project_id, "view": view_id},
+        json={"selectedItems": kwargs.get("selected_items")},
+        headers={"content-type": "application/json"},
+    )
+    if not (200 <= raw.status_code < 300):
+        return json.dumps({
+            "error": True,
+            "tool": "run_label_studio_action_tool",
+            "status_code": raw.status_code,
+            "message": _summarize_error_body(raw.text),
+        })
+
+    try:
+        body = raw.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        response["result"] = body
+        for key in ("processed_items", "processed", "count", "reannotated_count", "detail"):
+            if key in body:
+                response["processed_count"] = body[key]
+                break
+
+    return json.dumps(_serialize(response))
 
 
 # ============================================================
