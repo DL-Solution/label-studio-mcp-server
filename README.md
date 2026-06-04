@@ -62,6 +62,23 @@ When configured this way the client launches the server as a local subprocess an
 talks to it over **stdio** (the default transport). This is the simplest setup and
 requires no open ports.
 
+### Environment variables
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `LABEL_STUDIO_API_KEY` | yes | Your Label Studio access token. |
+| `LABEL_STUDIO_URL` | no | Base URL of the instance (default `http://localhost:8080`). Any reachable host works, e.g. an internal `https://ls.internal.example`. |
+| `LABEL_STUDIO_CA_BUNDLE` | no | Path to a PEM file with the internal/corporate CA (e.g. an Active Directory CA) that issued the Label Studio **HTTPS** certificate. Needed so TLS verification succeeds for internally-issued certs. |
+| `LABEL_STUDIO_VERIFY_SSL` | no | Set to `false` to disable TLS certificate verification entirely. Insecure — only for trusted internal networks or testing. Defaults to enabled. |
+
+> **Internal / self-hosted over HTTPS:** if Label Studio is served on an internal
+> domain over **plain HTTP**, no TLS configuration is needed — just set
+> `LABEL_STUDIO_URL`. If it is served over **HTTPS with a certificate from an
+> internal CA** (such as an Active Directory CA), export that CA chain to a PEM
+> file and point `LABEL_STUDIO_CA_BUNDLE` at it so the certificate is trusted.
+> Also make sure the host running this server can resolve the internal hostname
+> (DNS / domain membership).
+
 ### Install as a Desktop Extension (.mcpb)
 
 Claude Desktop can install this server from a single **MCP Bundle** file
