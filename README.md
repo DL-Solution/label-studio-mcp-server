@@ -72,7 +72,9 @@ that form (`user_config`) and runs the server through the `uv` runtime, so the
 dependencies (including native ones) are managed automatically — no manual Python
 setup required.
 
-**Build the bundle:**
+**Get the bundle:** a prebuilt `.mcpb` is attached to every tagged
+[GitHub Release](https://github.com/HumanSignal/label-studio-mcp-server/releases)
+(built automatically by the `release-mcpb` workflow). To build it yourself instead:
 
 ```bash
 # One-time: install the bundler CLI
