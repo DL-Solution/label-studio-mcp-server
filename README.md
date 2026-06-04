@@ -18,6 +18,11 @@ This project provides a Model Context Protocol (MCP) server that allows interact
 
 <img src="./static/example.png" alt="Example usage of Label Studio MCP Server" width="600">
 
+## Documentation
+
+* **[User Guide](./docs/user-guide.md)** — install, configure (URL / API key / TLS) and use the extension in Claude Desktop.
+* **[Troubleshooting](./docs/troubleshooting.md)** — connection timeouts, TLS/certificates, `uv` not found, span-validation errors and more.
+
 ## Features
 
 The server exposes the full Label Studio REST API surface as MCP tools:
