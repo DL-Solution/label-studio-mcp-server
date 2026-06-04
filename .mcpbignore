@@ -6,4 +6,6 @@
 **/*.pyc
 .python-version
 dist/
+build/
+*.egg-info/
 *.mcpb
