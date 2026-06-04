@@ -16,8 +16,8 @@ Label Studio: проєкти, задачі, анотації, предикшен
 ## 2. Передумови
 
 - **Claude Desktop** (актуальна версія).
-- **Доступ до Label Studio** у мережі — для внутрішнього інстансу
-  `https://label-studio.dk.gkm-ua.local` потрібно бути в корпоративній мережі
+- **Доступ до Label Studio** у мережі — для внутрішнього інстансу (напр.
+  `https://label-studio.internal.example`) потрібно бути в корпоративній мережі
   або через VPN.
 - **API-ключ** Label Studio (див. крок 4).
 - **uv** — зазвичай надається Claude Desktop автоматично. Якщо у логах буде
@@ -38,7 +38,7 @@ Label Studio: проєкти, задачі, анотації, предикшен
 
 ## 4. Де взяти API-ключ
 
-1. Залогінься в Label Studio (`https://label-studio.dk.gkm-ua.local`).
+1. Залогінься в Label Studio (свій інстанс, напр. `https://label-studio.internal.example`).
 2. Праворуч угорі → **Account & Settings**.
 3. Розділ **Access Token** → скопіюй токен.
 
@@ -50,7 +50,7 @@ Label Studio: проєкти, задачі, анотації, предикшен
 
 | Поле | Значення |
 |---|---|
-| **Label Studio URL** | `https://label-studio.dk.gkm-ua.local` (або свій інстанс) |
+| **Label Studio URL** | URL твого інстансу, напр. `https://label-studio.internal.example` |
 | **API Key** | токен з кроку 4 (маскується, зберігається в сховищі ОС) |
 | **CA Certificate** *(опц.)* | PEM внутрішнього CA, якщо HTTPS-сертифікат від AD і не довіряється автоматично |
 | **Verify TLS certificate** | лиши увімкненим; вимикай лише якщо сертифікат самопідписаний і немає CA |
@@ -58,7 +58,7 @@ Label Studio: проєкти, задачі, анотації, предикшен
 Натисни **Save**, потім увімкни перемикач **Enabled**.
 
 > **TLS для внутрішнього HTTPS:** на доменній машині кореневий сертифікат
-> `gkm-ua.local` зазвичай уже в сховищі Windows — тоді нічого додатково не
+> внутрішнього CA зазвичай уже в сховищі Windows — тоді нічого додатково не
 > треба. Якщо ні — або вкажи **CA Certificate** (PEM), або тимчасово вимкни
 > **Verify TLS certificate**.
 
