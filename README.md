@@ -62,6 +62,38 @@ When configured this way the client launches the server as a local subprocess an
 talks to it over **stdio** (the default transport). This is the simplest setup and
 requires no open ports.
 
+### Install as a Desktop Extension (.mcpb)
+
+Claude Desktop can install this server from a single **MCP Bundle** file
+(`.mcpb`, formerly `.dxt`). Instead of hand-editing a JSON config, you double-click
+the bundle and Claude Desktop shows a settings form for the Label Studio URL and
+API key. This repository ships a [`manifest.json`](./manifest.json) that defines
+that form (`user_config`) and runs the server through the `uv` runtime, so the
+dependencies (including native ones) are managed automatically — no manual Python
+setup required.
+
+**Build the bundle:**
+
+```bash
+# One-time: install the bundler CLI
+npm install -g @anthropic-ai/mcpb
+
+# From the repository root
+mcpb validate manifest.json     # optional sanity check
+mcpb pack . dist/label-studio.mcpb
+```
+
+**Install it:**
+
+1. Open **Claude Desktop → Settings → Extensions**.
+2. Drag in (or open) the generated `dist/label-studio.mcpb` file.
+3. Fill in **Label Studio URL** and **API Key** in the settings panel, then enable
+   the extension.
+
+The values you enter are injected into the server process as the
+`LABEL_STUDIO_URL` and `LABEL_STUDIO_API_KEY` environment variables; the API key is
+marked `sensitive`, so Claude Desktop masks it and stores it in the OS keychain.
+
 ### Running over HTTP
 
 The server can also run as a network service over HTTP, which is useful when the

@@ -1,0 +1,56 @@
+{
+  "manifest_version": "0.4",
+  "name": "label-studio-mcp",
+  "display_name": "Label Studio",
+  "version": "0.1.0",
+  "description": "Interact with a Label Studio instance: manage projects, tasks, annotations, predictions, users, workspaces, webhooks and ML backends.",
+  "long_description": "A Model Context Protocol server for [Label Studio](https://labelstud.io/). It exposes the full Label Studio REST API as tools so you can create and configure projects, import and label tasks, manage annotations and predictions, run Data Manager bulk actions, and administer users, workspaces, webhooks and ML backends — all from your MCP client.",
+  "author": {
+    "name": "HumanSignal",
+    "url": "https://github.com/HumanSignal/label-studio-mcp-server"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HumanSignal/label-studio-mcp-server"
+  },
+  "homepage": "https://labelstud.io/",
+  "documentation": "https://github.com/HumanSignal/label-studio-mcp-server#readme",
+  "keywords": ["label-studio", "annotation", "labeling", "machine-learning", "data-labeling"],
+  "license": "Apache-2.0",
+  "server": {
+    "type": "uv",
+    "entry_point": "label_studio_mcp/main.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "mcp-label-studio"],
+      "env": {
+        "LABEL_STUDIO_URL": "${user_config.label_studio_url}",
+        "LABEL_STUDIO_API_KEY": "${user_config.label_studio_api_key}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "user_config": {
+    "label_studio_url": {
+      "type": "string",
+      "title": "Label Studio URL",
+      "description": "Base URL of your Label Studio instance (e.g. http://localhost:8080).",
+      "required": true,
+      "default": "http://localhost:8080"
+    },
+    "label_studio_api_key": {
+      "type": "string",
+      "title": "API Key",
+      "description": "Your Label Studio access token (Account & Settings → Access Token).",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.10,<4.0"
+    }
+  }
+}
