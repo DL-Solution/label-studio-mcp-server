@@ -26,7 +26,9 @@
       "args": ["run", "--directory", "${__dirname}", "mcp-label-studio"],
       "env": {
         "LABEL_STUDIO_URL": "${user_config.label_studio_url}",
-        "LABEL_STUDIO_API_KEY": "${user_config.label_studio_api_key}"
+        "LABEL_STUDIO_API_KEY": "${user_config.label_studio_api_key}",
+        "LABEL_STUDIO_CA_BUNDLE": "${user_config.label_studio_ca_bundle}",
+        "LABEL_STUDIO_VERIFY_SSL": "${user_config.label_studio_verify_ssl}"
       }
     }
   },
@@ -35,7 +37,7 @@
     "label_studio_url": {
       "type": "string",
       "title": "Label Studio URL",
-      "description": "Base URL of your Label Studio instance (e.g. http://localhost:8080).",
+      "description": "Base URL of your Label Studio instance (e.g. http://localhost:8080 or https://ls.internal.example).",
       "required": true,
       "default": "http://localhost:8080"
     },
@@ -45,6 +47,18 @@
       "description": "Your Label Studio access token (Account & Settings → Access Token).",
       "required": true,
       "sensitive": true
+    },
+    "label_studio_ca_bundle": {
+      "type": "file",
+      "title": "CA Certificate (optional)",
+      "description": "PEM file of the internal/corporate CA that issued your Label Studio HTTPS certificate (e.g. an Active Directory CA). Leave empty for public certificates or plain HTTP.",
+      "required": false
+    },
+    "label_studio_verify_ssl": {
+      "type": "boolean",
+      "title": "Verify TLS certificate",
+      "description": "Disable only for trusted internal networks with self-signed certificates. When off, HTTPS certificates are not verified.",
+      "default": true
     }
   },
   "compatibility": {
