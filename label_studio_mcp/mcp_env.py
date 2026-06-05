@@ -1,7 +1,5 @@
 import os
 import sys
-import httpx
-from label_studio_sdk.client import LabelStudio
 
 
 def _log(message: str) -> None:
@@ -33,7 +31,10 @@ def _build_httpx_client():
     """Return a custom httpx.Client only when non-default TLS settings are needed.
 
     Returns None when the defaults are fine, so the SDK uses its own client.
+    httpx is imported here (not at module load) to keep startup imports minimal.
     """
+    import httpx
+
     if not LABEL_STUDIO_VERIFY_SSL:
         return httpx.Client(verify=False)
     if LABEL_STUDIO_CA_BUNDLE:
@@ -41,15 +42,40 @@ def _build_httpx_client():
     return None
 
 
-ls = None
-if LABEL_STUDIO_API_KEY:
+# Lazily-created Label Studio client cache.
+#   _UNSET  -> not initialized yet (first get_ls() call will build it)
+#   None    -> initialization was attempted but the client is unavailable
+_UNSET = object()
+_ls_cache = _UNSET
+
+
+def get_ls():
+    """Return the Label Studio client, building it on first use (lazy, cached).
+
+    Importing the (heavy) Label Studio SDK and constructing the client is
+    deferred out of module import. This keeps the MCP ``initialize`` handshake
+    fast so clients like Claude Desktop don't time out waiting for the server to
+    start. Subsequent calls return the cached client, or ``None`` if it could
+    not be created (e.g. missing API key).
+    """
+    global _ls_cache
+    if _ls_cache is not _UNSET:
+        return _ls_cache
+
+    if not LABEL_STUDIO_API_KEY:
+        _log("LABEL_STUDIO_API_KEY not set; Label Studio client unavailable.")
+        _ls_cache = None
+        return _ls_cache
+
     try:
+        from label_studio_sdk.client import LabelStudio
+
         client_kwargs = {"base_url": LABEL_STUDIO_URL, "api_key": LABEL_STUDIO_API_KEY}
         httpx_client = _build_httpx_client()
         if httpx_client is not None:
             client_kwargs["httpx_client"] = httpx_client
 
-        ls = LabelStudio(**client_kwargs)
+        _ls_cache = LabelStudio(**client_kwargs)
 
         if not LABEL_STUDIO_VERIFY_SSL:
             tls_note = " (TLS verification DISABLED)"
@@ -60,5 +86,6 @@ if LABEL_STUDIO_API_KEY:
         _log(f"Connected to Label Studio at {LABEL_STUDIO_URL}{tls_note}")
     except Exception as e:
         _log(f"Error initializing Label Studio client: {e}")
-else:
-    _log("LABEL_STUDIO_API_KEY not set; Label Studio client unavailable.")
+        _ls_cache = None
+
+    return _ls_cache
