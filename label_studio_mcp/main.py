@@ -32,6 +32,52 @@ def _warm_up_client() -> None:
         pass
 
 
+# Ensures the warm-up runs exactly once even if the trigger fires more than once.
+_warm_up_started = threading.Event()
+
+
+def _start_warm_up() -> None:
+    """Kick off the background warm-up thread, at most once."""
+    if _warm_up_started.is_set():
+        return
+    _warm_up_started.set()
+    threading.Thread(target=_warm_up_client, name="ls-warmup", daemon=True).start()
+
+
+def _arm_warm_up_after_handshake() -> bool:
+    """Defer warm-up until the client signals it has finished initializing.
+
+    Running the heavy SDK import concurrently with the ``initialize`` handshake
+    makes that one handshake slow (observed ~14 s on Windows): the request that
+    negotiates capabilities contends with the import for Python's interpreter/
+    import machinery, while later calls like ``tools/list`` are unaffected.
+
+    The client sends ``notifications/initialized`` immediately *after* it
+    receives the ``initialize`` response, so hooking that notification starts
+    the warm-up the instant the handshake is done — early enough to be ready
+    before the first (much later) tool call, but late enough not to slow the
+    handshake. Returns False if the server internals aren't shaped as expected,
+    so the caller can fall back to starting the warm-up immediately.
+    """
+    try:
+        from mcp import types
+
+        low_level = mcp._mcp_server
+        handlers = low_level.notification_handlers
+    except Exception:
+        return False
+
+    previous = handlers.get(types.InitializedNotification)
+
+    async def _on_initialized(notification):
+        _start_warm_up()
+        if previous is not None:  # pragma: no cover - defensive chaining
+            await previous(notification)
+
+    handlers[types.InitializedNotification] = _on_initialized
+    return True
+
+
 def main():
     """Entry point for the Label Studio MCP server.
 
@@ -79,11 +125,15 @@ def main():
         else:
             mcp.settings.sse_path = args.path
 
-    # Start building the Label Studio client in the background so the heavy SDK
-    # import is paid off the request path, not on the first tool call. The
-    # handshake (mcp.run) proceeds immediately; the client is ready by the time
-    # the first tool runs in the common case.
-    threading.Thread(target=_warm_up_client, name="ls-warmup", daemon=True).start()
+    # Build the Label Studio client in the background so the heavy SDK import is
+    # paid off the request path, not on the first tool call. For stdio (Claude
+    # Desktop et al.) defer it until the client finishes the handshake, so the
+    # import can't slow down ``initialize``; if that hook can't be installed,
+    # fall back to starting immediately. HTTP transports may serve many clients
+    # and have no single handshake to wait on, so warm up right away there.
+    deferred = args.transport == "stdio" and _arm_warm_up_after_handshake()
+    if not deferred:
+        _start_warm_up()
 
     mcp.run(transport=args.transport)
 
