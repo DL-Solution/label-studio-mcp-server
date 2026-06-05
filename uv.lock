@@ -557,7 +557,7 @@ wheels = [
 
 [[package]]
 name = "label-studio-mcp"
-version = "1.1.2"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
