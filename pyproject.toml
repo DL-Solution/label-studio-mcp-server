@@ -35,5 +35,5 @@ mcp-label-studio = "label_studio_mcp.main:main"
 Home = "https://github.com/DL-Solution/label-studio-mcp-server"
 Upstream = "https://github.com/HumanSignal/label-studio-mcp-server"
 
-[tool.setuptools]
-packages = ["label_studio_mcp"]
+[tool.setuptools.packages.find]
+include = ["label_studio_mcp*"]
