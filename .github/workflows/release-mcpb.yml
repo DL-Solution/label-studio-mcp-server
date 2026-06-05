@@ -87,6 +87,24 @@ jobs:
 
       - name: Attach bundle to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: ${{ env.BUNDLE }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only ever *upload* the asset to the release the maintainer creates
+          # right after pushing the tag — never create/update the release here.
+          # softprops/action-gh-release used to own creation too, which collided
+          # with the manual `gh release create` (HTTP 422 already_exists) and left
+          # the bundle unattached. Waiting for the release, then uploading, makes
+          # the two cooperate regardless of which lands first.
+          tag="$GITHUB_REF_NAME"
+          for i in $(seq 1 30); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "$BUNDLE" --clobber
+              echo "Attached $BUNDLE to release $tag"
+              exit 0
+            fi
+            echo "Release $tag not published yet, waiting... ($i/30)"
+            sleep 5
+          done
+          echo "::error::Release $tag was not created within the timeout; bundle is available as a workflow artifact."
+          exit 1
