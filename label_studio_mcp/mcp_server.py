@@ -1,18 +1,21 @@
 from typing import Any, List, Dict, Optional
-import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-import os
 import re
 import json
-from label_studio_sdk.client import LabelStudio
-import argparse
 import functools
-from label_studio_sdk.label_interface import LabelInterface
 from pydantic import BaseModel
 import datetime
 
-from .mcp_env import LABEL_STUDIO_URL, LABEL_STUDIO_API_KEY, ls
+from .mcp_env import LABEL_STUDIO_URL, get_ls
+
+# The Label Studio client is created lazily on first tool/resource call (see
+# ``require_ls_connection``). Importing the heavy SDK and building the client is
+# kept out of module import so the MCP ``initialize`` handshake stays fast and
+# clients like Claude Desktop don't time out on startup. This module-global is
+# populated by ``require_ls_connection`` before any tool body runs, so the tool
+# functions below can keep referencing ``ls`` directly.
+ls = None
 
 # Initialize FastMCP server
 mcp = FastMCP("label-studio-mcp")
@@ -85,6 +88,10 @@ def require_ls_connection(func):
     # Preserve original signature using functools.wraps
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        # Build (or reuse) the Label Studio client on first use and expose it as
+        # the module global so the wrapped tool/resource bodies can use ``ls``.
+        global ls
+        ls = get_ls()
         if ls is None:
             # Make the error message more informative
             return ("Error: Label Studio client not available. "
@@ -1890,6 +1897,8 @@ def generate_label_studio_label_config_tool(
 
     result = {"label_config": config, "validated": True}
     try:
+        from label_studio_sdk.label_interface import LabelInterface
+
         LabelInterface(config)
     except Exception as exc:  # generated XML should parse; report if it somehow doesn't
         result["validated"] = False
