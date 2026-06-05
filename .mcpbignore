@@ -1,12 +1,15 @@
 # Files excluded from the packed .mcpb bundle
 .git/
 .github/
+.claude/
 scripts/
 tests/
 docs/
 .venv/
 **/__pycache__/
 **/*.pyc
+.pytest_cache/
+static/
 .python-version
 dist/
 build/
