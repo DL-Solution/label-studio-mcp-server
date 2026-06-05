@@ -1,11 +1,35 @@
 import argparse
 import os
+import threading
 
 from label_studio_mcp.mcp_server import mcp
 
 
 def _str_to_bool(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _warm_up_client() -> None:
+    """Build the Label Studio client off the request path, in the background.
+
+    The SDK import + client construction can take minutes on first use (cold
+    bytecode compilation, AV scanning of a large package on Windows). It is
+    deliberately deferred out of module import so the MCP ``initialize``
+    handshake stays fast. But if it runs inside the first tool call, that call
+    can exceed the client's per-request timeout (~4 min in Claude Desktop) — the
+    work still completes server-side, so a user retry creates a duplicate
+    project. Warming the cached, idempotent ``get_ls()`` here moves the cost
+    into a background thread so the first real tool call finds it ready.
+    """
+    # Imported lazily so this module stays cheap to import.
+    from label_studio_mcp.mcp_env import get_ls
+
+    try:
+        get_ls()
+    except Exception:
+        # get_ls() already logs and caches failures; the next tool call will
+        # surface a proper error. Never let warm-up crash the server.
+        pass
 
 
 def main():
@@ -54,6 +78,12 @@ def main():
             mcp.settings.streamable_http_path = args.path
         else:
             mcp.settings.sse_path = args.path
+
+    # Start building the Label Studio client in the background so the heavy SDK
+    # import is paid off the request path, not on the first tool call. The
+    # handshake (mcp.run) proceeds immediately; the client is ready by the time
+    # the first tool runs in the common case.
+    threading.Thread(target=_warm_up_client, name="ls-warmup", daemon=True).start()
 
     mcp.run(transport=args.transport)
 

@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 
 def _log(message: str) -> None:
@@ -48,6 +49,10 @@ def _build_httpx_client():
 _UNSET = object()
 _ls_cache = _UNSET
 
+# Guards client construction so the background warm-up thread and a concurrent
+# first tool call build the (heavy) SDK client exactly once.
+_ls_lock = threading.Lock()
+
 
 def get_ls():
     """Return the Label Studio client, building it on first use (lazy, cached).
@@ -59,8 +64,22 @@ def get_ls():
     not be created (e.g. missing API key).
     """
     global _ls_cache
+    # Fast path: already built (or already failed). No lock needed for a plain
+    # reference read.
     if _ls_cache is not _UNSET:
         return _ls_cache
+
+    with _ls_lock:
+        # Re-check inside the lock: another thread may have built it while we
+        # waited.
+        if _ls_cache is not _UNSET:
+            return _ls_cache
+        return _build_ls()
+
+
+def _build_ls():
+    """Construct and cache the client. Caller must hold ``_ls_lock``."""
+    global _ls_cache
 
     if not LABEL_STUDIO_API_KEY:
         _log("LABEL_STUDIO_API_KEY not set; Label Studio client unavailable.")

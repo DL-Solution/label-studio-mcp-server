@@ -485,6 +485,63 @@ def import_label_studio_project_tasks_tool(
 
 @write_tool()
 @require_ls_connection
+def import_label_studio_tasks_inline_tool(
+    project_id: int,
+    tasks: List[Dict[str, Any]],
+) -> str:
+    """Imports tasks into a Label Studio project directly from an inline array (no file).
+
+    Use this when the tasks are available in the conversation rather than as a file on
+    the server's filesystem. Pre-annotations are preserved: include ``predictions`` and/or
+    ``annotations`` on each task and they are sent to Label Studio in a single request.
+
+    Args:
+        project_id (int): The ID of the target Label Studio project.
+        tasks (list[dict]): A non-empty list of task objects. Each item should be shaped
+            like ``{"data": {...}, "predictions"?: [...], "annotations"?: [...]}``.
+            ``predictions``/``annotations`` are optional.
+
+    Returns:
+        JSON string with ``project_id``, ``imported_task_count`` and the raw Label Studio
+        import summary (which includes prediction/annotation counts), plus a link to the
+        project's data manager view. After calling, verify with
+        ``list_label_studio_project_tasks_tool`` / ``get_label_studio_task_data_tool``
+        rather than relying solely on this return value (the MCP transport may time out a
+        slow call even when the import succeeded server-side).
+
+    Reference: Uses ls.projects.import_tasks (POST /api/projects/{id}/import) from the SDK v1.0+.
+    """
+    # Validate input up front so the caller gets a clear message instead of an opaque API error.
+    if not isinstance(tasks, list):
+        return "Error: 'tasks' must be a JSON array (list) of task objects."
+    if not tasks:
+        return "Error: 'tasks' is empty; provide at least one task object."
+    if not all(isinstance(t, dict) for t in tasks):
+        return "Error: every item in 'tasks' must be an object (dict), e.g. {\"data\": {...}}."
+
+    project_url = f"{LABEL_STUDIO_URL}/projects/{project_id}/data"
+
+    # Single API call; predictions/annotations inside each task travel in the same request body.
+    import_result = ls.projects.import_tasks(id=project_id, request=tasks)
+
+    summary = _serialize(import_result)
+    if not isinstance(summary, dict):
+        summary = {"details": summary}
+
+    # LS returns the number of created tasks as ``task_count``; surface it explicitly for easy verification.
+    imported_task_count = summary.get("task_count")
+
+    final_response = {
+        "project_id": project_id,
+        "imported_task_count": imported_task_count,
+        "import_summary": summary,
+        "project_url": project_url,
+    }
+
+    return json.dumps(final_response, ensure_ascii=False, default=str)
+
+@write_tool()
+@require_ls_connection
 def create_label_studio_prediction_tool(
     task_id: int,
     result: List[Dict[str, Any]],  # Expect result as a list directly
