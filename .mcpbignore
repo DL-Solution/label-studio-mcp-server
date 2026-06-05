@@ -2,6 +2,7 @@
 .git/
 .github/
 scripts/
+tests/
 docs/
 .venv/
 **/__pycache__/

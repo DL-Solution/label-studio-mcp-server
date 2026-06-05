@@ -37,3 +37,9 @@ Upstream = "https://github.com/HumanSignal/label-studio-mcp-server"
 
 [tool.setuptools.packages.find]
 include = ["label_studio_mcp*"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
