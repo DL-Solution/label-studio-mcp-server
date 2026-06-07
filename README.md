@@ -39,6 +39,7 @@ The server exposes the full Label Studio REST API surface as MCP tools:
 *   **ML Backends**: Connect, read, update, delete, list, and trigger training on ML backends.
 *   **Config Generation**: Build and locally validate a labeling-config XML from a high-level spec (data type + control + labels) — no need to hand-write XML.
 *   **Analytics**: Project progress statistics (totals, completion %, ground-truth/skipped counts) and a best-effort per-annotator breakdown.
+*   **LLM-assisted labeling (OpenRouter)**: Have a *selected* OpenRouter model produce the labeling — per task or in batch — and save it as predictions (default) or annotations. Supports text controls: Choices, Labels (NER spans), TextArea, Rating. Requires `OPENROUTER_API_KEY`; the model defaults to `OPENROUTER_MODEL` (e.g. `openai/gpt-4o-mini`) and is overridable per call.
 *   **Instance Info**: Retrieve Label Studio version/build information.
 *   **SDK Integration**: Leverages the official `label-studio-sdk` for communication.
 
@@ -89,6 +90,9 @@ requires no open ports.
 | `LABEL_STUDIO_URL` | no | Base URL of the instance (default `http://localhost:8080`). Any reachable host works, e.g. an internal `https://label-studio.internal.example`. |
 | `LABEL_STUDIO_CA_BUNDLE` | no | Path to a PEM file with the internal/corporate CA (e.g. an Active Directory CA) that issued the Label Studio **HTTPS** certificate. Needed so TLS verification succeeds for internally-issued certs. |
 | `LABEL_STUDIO_VERIFY_SSL` | no | Set to `false` to disable TLS certificate verification entirely. Insecure — only for trusted internal networks or testing. Defaults to enabled. |
+| `OPENROUTER_API_KEY` | no | OpenRouter access token ([openrouter.ai/keys](https://openrouter.ai/keys)). Enables the LLM-assisted labeling tools; leave unset to disable them. |
+| `OPENROUTER_MODEL` | no | Default model id for LLM-assisted labeling, e.g. `openai/gpt-4o-mini` or `google/gemini-2.0-flash`. Overridable per tool call. Defaults to `openai/gpt-4o-mini`. |
+| `OPENROUTER_BASE_URL` | no | OpenRouter API base URL. Defaults to `https://openrouter.ai/api/v1`. |
 
 > **Internal / self-hosted over HTTPS:** the server bundles
 > [`pip-system-certs`](https://pypi.org/project/pip-system-certs/), so it trusts
