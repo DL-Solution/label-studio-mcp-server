@@ -27,6 +27,16 @@ LABEL_STUDIO_VERIFY_SSL = os.getenv("LABEL_STUDIO_VERIFY_SSL", "true").strip().l
     "0", "false", "no", "off",
 }
 
+# Optional OpenRouter configuration for LLM-assisted labeling (see
+# tools/llm_labeling.py). When set, a selected model produces the labeling.
+#   OPENROUTER_API_KEY  - OpenRouter access token (https://openrouter.ai/keys).
+#   OPENROUTER_MODEL    - default model id, e.g. "openai/gpt-4o-mini". Overridable
+#                         per tool call.
+#   OPENROUTER_BASE_URL - API base URL (rarely changed).
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or None
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL") or "openai/gpt-4o-mini"
+OPENROUTER_BASE_URL = (os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1").rstrip("/")
+
 
 def _build_httpx_client():
     """Return a custom httpx.Client only when non-default TLS settings are needed.

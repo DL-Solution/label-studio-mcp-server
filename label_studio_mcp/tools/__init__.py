@@ -20,4 +20,5 @@ from .ml_backends import *  # noqa: F401,F403
 from .actions import *  # noqa: F401,F403
 from .config_gen import *  # noqa: F401,F403
 from .statistics import *  # noqa: F401,F403
+from .llm_labeling import *  # noqa: F401,F403
 from .resources import *  # noqa: F401,F403

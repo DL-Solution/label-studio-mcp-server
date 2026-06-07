@@ -1,6 +1,6 @@
 [project]
 name = "label-studio-mcp"
-version = "1.2.3"
+version = "1.3.0"
 description = "A Model Context Protocol (MCP) server for Label Studio"
 authors = [
     { name = "DL-Solution" },
